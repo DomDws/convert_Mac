@@ -4,9 +4,14 @@ import UniformTypeIdentifiers
 
 private let labelWidth: CGFloat = 104
 
+extension Notification.Name {
+    static let quickActionChanged = Notification.Name("ConvertQuickActionChanged")
+}
+
 struct ContentView: View {
     @ObservedObject var model: ConvertModel
     @State private var dropTargeted = false
+    @State private var quickActionInstalled = QuickAction.isInstalled
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -85,15 +90,33 @@ struct ContentView: View {
     }
 
     private var dropZone: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "tray.and.arrow.down").font(.system(size: 30)).foregroundStyle(.secondary)
-            Text("Drop audio, video, images, documents or PDFs").foregroundStyle(.secondary)
-            Button("Choose Files…") { chooseFiles() }
+        VStack(spacing: 12) {
+            VStack(spacing: 10) {
+                Image(systemName: "tray.and.arrow.down").font(.system(size: 30)).foregroundStyle(.secondary)
+                Text("Drop audio, video, images, documents or PDFs").foregroundStyle(.secondary)
+                Button("Choose Files…") { chooseFiles() }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+            .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.4)))
+
+            if !quickActionInstalled {
+                HStack(spacing: 10) {
+                    Image(systemName: "contextualmenu.and.cursorarrow").foregroundStyle(Color.accentColor)
+                    Text("Add “Convert…” to Finder’s right-click menu").font(.callout)
+                    Spacer()
+                    Button("Install") {
+                        NSApp.sendAction(#selector(AppDelegate.installQuickAction(_:)), to: nil, from: nil)
+                    }
+                }
+                .padding(10)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-            .foregroundStyle(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.4)))
+        .onReceive(NotificationCenter.default.publisher(for: .quickActionChanged)) { _ in
+            quickActionInstalled = QuickAction.isInstalled
+        }
     }
 
     private func chooseFiles() {

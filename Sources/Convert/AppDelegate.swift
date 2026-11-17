@@ -64,12 +64,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if panel.runModal() == .OK { openPanel(panel.urls) }
     }
 
+    @objc func installQuickAction(_ sender: Any?) {
+        do {
+            try QuickAction.install()
+            alert("Quick Action installed",
+                  "Right-click files in Finder → Quick Actions → Convert…\n\nIf it doesn't show up, enable it in System Settings → General → Login Items & Extensions → Finder.")
+        } catch {
+            alert("Couldn't install the Quick Action", error.localizedDescription)
+        }
+        NotificationCenter.default.post(name: .quickActionChanged, object: nil)
+    }
+
+    @objc func removeQuickAction(_ sender: Any?) {
+        do { try QuickAction.uninstall() } catch { alert("Couldn't remove the Quick Action", error.localizedDescription) }
+        NotificationCenter.default.post(name: .quickActionChanged, object: nil)
+    }
+
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(installQuickAction(_:)): !QuickAction.isInstalled
+        case #selector(removeQuickAction(_:)): QuickAction.isInstalled
+        default: true
+        }
+    }
+
+    private func alert(_ title: String, _ text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.runModal()
+    }
+
     private func buildMenu() {
         let main = NSMenu()
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Convert", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Install Finder Quick Action", action: #selector(installQuickAction(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Remove Finder Quick Action", action: #selector(removeQuickAction(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Convert", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit Convert", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

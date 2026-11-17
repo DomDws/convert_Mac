@@ -31,7 +31,16 @@ func runCLI(_ args: [String]) {
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let args = Array(CommandLine.arguments.dropFirst())
-    if args.first == "--cli" {
+    if args.first == "--install-quick-action" || args.first == "--uninstall-quick-action" {
+        do {
+            if args.first == "--install-quick-action" { try QuickAction.install() } else { try QuickAction.uninstall() }
+            print(QuickAction.isInstalled ? "Quick Action installed: \(QuickAction.url.path)" : "Quick Action removed")
+            exit(0)
+        } catch {
+            print("Failed: \(error.localizedDescription)")
+            exit(1)
+        }
+    } else if args.first == "--cli" {
         app.setActivationPolicy(.prohibited)
         runCLI(Array(args.dropFirst()))
         app.run()
