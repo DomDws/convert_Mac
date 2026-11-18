@@ -243,4 +243,30 @@ struct ConvSettings: Codable, Equatable {
     // Documents / PDF
     var paperA4 = true
     var pdfDPI = 150
+
+    init() {}
+
+    /// Settings are saved per format as JSON. A key that's missing keeps its default, so settings
+    /// saved by an older version survive an update that adds a field; unknown keys are ignored.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func read<T: Decodable>(_ key: CodingKeys, into value: inout T) throws {
+            if let saved = try c.decodeIfPresent(T.self, forKey: key) { value = saved }
+        }
+        try read(.audioBitrate, into: &audioBitrate)
+        try read(.sampleRate, into: &sampleRate)
+        try read(.channels, into: &channels)
+        try read(.bitDepth, into: &bitDepth)
+        try read(.videoQuality, into: &videoQuality)
+        try read(.videoHeight, into: &videoHeight)
+        try read(.fps, into: &fps)
+        try read(.keepAudio, into: &keepAudio)
+        try read(.hardware, into: &hardware)
+        try read(.gifWidth, into: &gifWidth)
+        try read(.gifFps, into: &gifFps)
+        try read(.imageQuality, into: &imageQuality)
+        try read(.maxSize, into: &maxSize)
+        try read(.paperA4, into: &paperA4)
+        try read(.pdfDPI, into: &pdfDPI)
+    }
 }
