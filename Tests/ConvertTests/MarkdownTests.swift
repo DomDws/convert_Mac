@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Convert
 
 /// The Markdown → HTML renderer. Its output is exact and stable, so these compare whole snippets.
@@ -14,8 +15,9 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testUnderscoresInsideWordsAreNotItalic() {
-        XCTAssertEqual(html("snake_case_word and _real italic_"),
-                       "<p>snake_case_word and <em>real italic</em></p>")
+        XCTAssertEqual(
+            html("snake_case_word and _real italic_"),
+            "<p>snake_case_word and <em>real italic</em></p>")
     }
 
     func testCodeSpansProtectTheirContents() {
@@ -23,8 +25,9 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testRawHTMLIsEscaped() {
-        XCTAssertEqual(html(#"<b>raw</b> & "quotes""#),
-                       "<p>&lt;b&gt;raw&lt;/b&gt; &amp; &quot;quotes&quot;</p>")
+        XCTAssertEqual(
+            html(#"<b>raw</b> & "quotes""#),
+            "<p>&lt;b&gt;raw&lt;/b&gt; &amp; &quot;quotes&quot;</p>")
     }
 
     // MARK: Lists
@@ -35,8 +38,9 @@ final class MarkdownTests: XCTestCase {
 
     func testOrderedListKeepsItsStartNumber() {
         // Like CommonMark, only the first number counts.
-        XCTAssertEqual(html("3. three", "4. four", "9. nine"),
-                       "<ol start=\"3\">\n<li>three\n</li>\n<li>four\n</li>\n<li>nine\n</li></ol>")
+        XCTAssertEqual(
+            html("3. three", "4. four", "9. nine"),
+            "<ol start=\"3\">\n<li>three\n</li>\n<li>four\n</li>\n<li>nine\n</li></ol>")
     }
 
     func testOrderedListCanStartAtZero() {
@@ -44,28 +48,31 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testNestedOrderedListKeepsItsStartNumber() {
-        XCTAssertEqual(html("- outer", "  2. inner two", "  3. inner three", "- back"),
-                       """
-                       <ul>
-                       <li>outer
-                       <ol start="2">
-                       <li>inner two
-                       </li>
-                       <li>inner three
-                       </li></ol>
-                       </li>
-                       <li>back
-                       </li></ul>
-                       """)
+        XCTAssertEqual(
+            html("- outer", "  2. inner two", "  3. inner three", "- back"),
+            """
+            <ul>
+            <li>outer
+            <ol start="2">
+            <li>inner two
+            </li>
+            <li>inner three
+            </li></ol>
+            </li>
+            <li>back
+            </li></ul>
+            """)
     }
 
     func testOrderedListAfterBulletsKeepsItsStartNumber() {
-        XCTAssertEqual(html("- bullet", "5) five", "6) six"),
-                       "<ul>\n<li>bullet\n</li></ul><ol start=\"5\">\n<li>five\n</li>\n<li>six\n</li></ol>")
+        XCTAssertEqual(
+            html("- bullet", "5) five", "6) six"),
+            "<ul>\n<li>bullet\n</li></ul><ol start=\"5\">\n<li>five\n</li>\n<li>six\n</li></ol>")
     }
 
     func testListBetweenParagraphs() {
-        XCTAssertEqual(html("Para", "", "1. one", "", "After"),
-                       "<p>Para</p>\n<ol>\n<li>one\n</li></ol>\n<p>After</p>")
+        XCTAssertEqual(
+            html("Para", "", "1. one", "", "After"),
+            "<p>Para</p>\n<ol>\n<li>one\n</li></ol>\n<p>After</p>")
     }
 }

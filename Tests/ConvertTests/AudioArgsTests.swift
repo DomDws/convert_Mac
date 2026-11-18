@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Convert
 
 /// The ffmpeg arguments for audio targets. These check the flags that decide the result
@@ -8,8 +9,10 @@ final class AudioArgsTests: XCTestCase {
     private let cdSource = Probe(sampleRate: 44100, hires: false, hasAudio: true, ok: true)
     private let hiResSource = Probe(sampleRate: 96000, hires: true, hasAudio: true, ok: true)
 
-    private func args(_ id: String, source: Probe, bitDepth: Int = 0, sampleRate: Int = 0,
-                      channels: Int = 0, bitrate: Int? = nil) throws -> [String] {
+    private func args(
+        _ id: String, source: Probe, bitDepth: Int = 0, sampleRate: Int = 0,
+        channels: Int = 0, bitrate: Int? = nil
+    ) throws -> [String] {
         let target = try XCTUnwrap(Targets.byID(id), "no target \(id)")
         var s = ConvSettings()
         s.bitDepth = bitDepth
@@ -28,7 +31,8 @@ final class AudioArgsTests: XCTestCase {
     private func count(_ flag: String, _ a: [String]) -> Int { a.filter { $0 == flag }.count }
 
     /// What a lossless target must ask ffmpeg for to write `bits`-bit audio.
-    private func assertDepth(_ id: String, _ a: [String], bits: Int, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertDepth(_ id: String, _ a: [String], bits: Int, file: StaticString = #filePath, line: UInt = #line)
+    {
         let deep = bits == 24
         switch id {
         case "wav":
@@ -53,25 +57,27 @@ final class AudioArgsTests: XCTestCase {
     func testHiResDetection() {
         // (sample_fmt, bits_per_sample, bits_per_raw_sample) as ffprobe reports them
         let deep: [(String, Int, Int)] = [
-            ("s32", 24, 24),    // 24-bit WAV
-            ("s32", 32, 32),    // 32-bit integer WAV
-            ("flt", 32, 0),     // 32-bit float WAV
-            ("dbl", 64, 0),     // 64-bit float WAV
-            ("s32", 0, 24),     // 24-bit FLAC
-            ("s32p", 0, 24),    // 24-bit ALAC
+            ("s32", 24, 24),  // 24-bit WAV
+            ("s32", 32, 32),  // 32-bit integer WAV
+            ("flt", 32, 0),  // 32-bit float WAV
+            ("dbl", 64, 0),  // 64-bit float WAV
+            ("s32", 0, 24),  // 24-bit FLAC
+            ("s32p", 0, 24),  // 24-bit ALAC
         ]
         let shallow: [(String, Int, Int)] = [
-            ("s16", 16, 0),     // 16-bit WAV
-            ("s16", 0, 16),     // 16-bit FLAC
-            ("fltp", 0, 0),     // MP3, AAC, Opus: decoded to float, but not high resolution
+            ("s16", 16, 0),  // 16-bit WAV
+            ("s16", 0, 16),  // 16-bit FLAC
+            ("fltp", 0, 0),  // MP3, AAC, Opus: decoded to float, but not high resolution
             ("flt", 0, 0),
-            ("", 0, 0),         // nothing known
+            ("", 0, 0),  // nothing known
         ]
         for (fmt, bps, raw) in deep {
-            XCTAssertTrue(FF.isHiRes(sampleFormat: fmt, bitsPerSample: bps, bitsPerRawSample: raw), "\(fmt) \(bps) \(raw)")
+            XCTAssertTrue(
+                FF.isHiRes(sampleFormat: fmt, bitsPerSample: bps, bitsPerRawSample: raw), "\(fmt) \(bps) \(raw)")
         }
         for (fmt, bps, raw) in shallow {
-            XCTAssertFalse(FF.isHiRes(sampleFormat: fmt, bitsPerSample: bps, bitsPerRawSample: raw), "\(fmt) \(bps) \(raw)")
+            XCTAssertFalse(
+                FF.isHiRes(sampleFormat: fmt, bitsPerSample: bps, bitsPerRawSample: raw), "\(fmt) \(bps) \(raw)")
         }
     }
 
@@ -142,8 +148,10 @@ final class AudioArgsTests: XCTestCase {
     }
 
     func testCodecs() throws {
-        let codecs = ["mp3": "libmp3lame", "m4a": "aac_at", "he-aac": "aac_at", "opus": "libopus", "ogg": "vorbis",
-                      "wma": "wmav2", "ac3": "ac3", "mp2": "mp2", "flac": "flac", "alac": "alac", "wv": "wavpack"]
+        let codecs = [
+            "mp3": "libmp3lame", "m4a": "aac_at", "he-aac": "aac_at", "opus": "libopus", "ogg": "vorbis",
+            "wma": "wmav2", "ac3": "ac3", "mp2": "mp2", "flac": "flac", "alac": "alac", "wv": "wavpack",
+        ]
         for (id, codec) in codecs { XCTAssertEqual(value("-c:a", try args(id, source: cdSource)), codec, id) }
         XCTAssertEqual(value("-profile:a", try args("he-aac", source: cdSource)), "4")
     }
