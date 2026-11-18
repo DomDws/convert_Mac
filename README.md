@@ -31,6 +31,7 @@ Select one or more files in Finder → right-click → **Quick Actions → Conve
 A small window opens showing only the formats that make sense for what you selected. Pick one and hit **Convert**. The new file lands next to the original (`song.opus` → `song.mp3`, and if that exists, `song 2.mp3`). If the original's folder is read-only (a disk image, a locked disk), it's saved to your Downloads folder instead, and the window tells you.
 
 - **Batches:** select as many files as you like (of the same kind: audio, video, images, documents or PDFs) and they're converted one after another with one progress bar. Video and audio can be mixed, since a video can become audio.
+- **Stop:** ends the conversion that's running, whatever kind of file it is, and removes anything half-written (a partial file, or a folder with only some of a PDF's pages).
 - **Move original to Trash:** tick the box and each original goes to the Trash once its conversion has finished. It only happens after the new file exists next to it, and you can always put it back from the Trash.
 
 | You select | You can convert to |

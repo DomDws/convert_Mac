@@ -18,26 +18,35 @@ enum ImageConv {
         }
     }
 
-    static func convert(_ input: URL, _ t: Target, _ s: ConvSettings) throws -> URL {
+    static func convert(_ input: URL, _ t: Target, _ s: ConvSettings, runner: Runner) throws -> URL {
         guard let src = CGImageSourceCreateWithURL(input as CFURL, nil), CGImageSourceGetCount(src) > 0 else {
             throw ConvertError("Couldn't read this image")
         }
         let opaque = ["jpg", "bmp"].contains(t.id)
         let image = try render(src, maxSize: s.maxSize, flatten: opaque)
+        try runner.checkCancelled()
         let out = try uniqueOutput(for: input, ext: t.ext)
-
-        if t.id == "webp" {
-            try writeWebP(image, to: out, quality: s.imageQuality)
-            return out
-        }
-        var props: [CFString: Any] = [:]
-        if t.isLossyImage { props[kCGImageDestinationLossyCompressionQuality] = s.imageQuality }
-        if t.id != "pdf-img", let meta = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
-            for key in [kCGImagePropertyExifDictionary, kCGImagePropertyIPTCDictionary, kCGImagePropertyGPSDictionary] {
-                if let v = meta[key] { props[key] = v }
+        do {
+            if t.id == "webp" {
+                try writeWebP(image, to: out, quality: s.imageQuality)
+            } else {
+                var props: [CFString: Any] = [:]
+                if t.isLossyImage { props[kCGImageDestinationLossyCompressionQuality] = s.imageQuality }
+                if t.id != "pdf-img", let meta = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
+                    for key in [
+                        kCGImagePropertyExifDictionary, kCGImagePropertyIPTCDictionary, kCGImagePropertyGPSDictionary,
+                    ] {
+                        if let v = meta[key] { props[key] = v }
+                    }
+                }
+                try write(image, to: out, type: utType(t.id), label: t.label, props: props)
             }
+            try runner.checkCancelled()
+        } catch {
+            // Stopped or failed: no half-written or unwanted file stays behind.
+            try? FileManager.default.removeItem(at: out)
+            throw error
         }
-        try write(image, to: out, type: utType(t.id), label: t.label, props: props)
         return out
     }
 

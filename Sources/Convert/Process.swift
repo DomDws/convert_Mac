@@ -6,6 +6,11 @@ struct ConvertError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Thrown by a conversion the user stopped.
+struct StoppedError: LocalizedError {
+    var errorDescription: String? { "Stopped" }
+}
+
 enum Tools {
     static func find(_ name: String) -> String? {
         for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
@@ -123,15 +128,27 @@ private final class DataBox: @unchecked Sendable {
     }
 }
 
-/// Runs ffmpeg-style processes with live progress and cancellation.
+/// One batch of conversions: runs ffmpeg-style processes with live progress, and carries Stop.
+/// Stop kills the process that's running; work done in-process calls `checkCancelled()` between steps.
 final class Runner: @unchecked Sendable {
     private var current: Process?
+    private var cancelled = false
     private let lock = NSLock()
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
 
     func cancel() {
         lock.lock()
+        cancelled = true
         current?.terminate()
         lock.unlock()
+    }
+
+    /// Clears an earlier Stop, before a new batch.
+    func reset() { lock.withLock { cancelled = false } }
+
+    func checkCancelled() throws {
+        if isCancelled { throw StoppedError() }
     }
 
     func run(
@@ -164,17 +181,25 @@ final class Runner: @unchecked Sendable {
                 self?.lock.lock()
                 self?.current = nil
                 self?.lock.unlock()
-                if proc.terminationStatus == 0 {
+                let name = URL(fileURLWithPath: exe).lastPathComponent
+                if self?.isCancelled == true {
+                    cont.resume(throwing: StoppedError())
+                } else if proc.terminationStatus == 0 {
                     cont.resume()
                 } else if proc.terminationReason == .uncaughtSignal {
-                    cont.resume(throwing: ConvertError("Stopped"))
+                    cont.resume(throwing: ConvertError("\(name) quit unexpectedly"))
                 } else {
                     cont.resume(
                         throwing: ConvertError(
-                            lastLine(errBox.value) ?? "ffmpeg exited with code \(proc.terminationStatus)"))
+                            lastLine(errBox.value) ?? "\(name) exited with code \(proc.terminationStatus)"))
                 }
             }
             lock.lock()
+            if cancelled {
+                lock.unlock()
+                cont.resume(throwing: StoppedError())
+                return
+            }
             do {
                 try p.run()
                 current = p

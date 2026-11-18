@@ -103,6 +103,7 @@ final class ConvertModel: ObservableObject {
     func start() {
         guard let t = target, phase == .idle, !files.isEmpty else { return }
         reset()
+        runner.reset()
         phase = .running
         let list = files
         let s = settings

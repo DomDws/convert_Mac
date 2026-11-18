@@ -22,21 +22,33 @@ enum DocConv {
         return (html, { try? FileManager.default.removeItem(at: html.deletingLastPathComponent()) })
     }
 
-    static func textutil(_ input: URL, _ t: Target) throws -> URL {
+    static func textutil(_ input: URL, _ t: Target, runner: Runner) throws -> URL {
+        try runner.checkCancelled()
         let out = try uniqueOutput(for: input, ext: t.ext)
         let src = try source(for: input)
         defer { src.cleanup() }
-        if Markdown.isMarkdown(input), t.ext == "html" {
-            try FileManager.default.copyItem(at: src.url, to: out)
-            return out
+        do {
+            if Markdown.isMarkdown(input), t.ext == "html" {
+                try FileManager.default.copyItem(at: src.url, to: out)
+            } else {
+                var args = ["-convert", t.ext]
+                if !textutilInputs.contains(src.url.pathExtension.lowercased()) {
+                    args += ["-format", "txt", "-inputencoding", "UTF-8"]
+                }
+                if t.ext == "txt" || t.ext == "html" { args += ["-encoding", "UTF-8"] }
+                args += ["-output", out.path, src.url.path]
+                try runSync("/usr/bin/textutil", args)
+                // textutil reports success even when it couldn't read the file and wrote nothing.
+                guard FileManager.default.fileExists(atPath: out.path) else {
+                    throw ConvertError("Couldn't read this document")
+                }
+            }
+            try runner.checkCancelled()
+        } catch {
+            // Stopped or failed: no half-written or unwanted file stays behind.
+            try? FileManager.default.removeItem(at: out)
+            throw error
         }
-        var args = ["-convert", t.ext]
-        if !textutilInputs.contains(src.url.pathExtension.lowercased()) {
-            args += ["-format", "txt", "-inputencoding", "UTF-8"]
-        }
-        if t.ext == "txt" || t.ext == "html" { args += ["-encoding", "UTF-8"] }
-        args += ["-output", out.path, src.url.path]
-        try runSync("/usr/bin/textutil", args)
         return out
     }
 
@@ -98,7 +110,7 @@ enum DocConv {
 
 enum PDFConv {
     static func convert(
-        _ input: URL, _ t: Target, _ s: ConvSettings,
+        _ input: URL, _ t: Target, _ s: ConvSettings, runner: Runner,
         progress: @Sendable (Double) -> Void
     ) throws -> [URL] {
         if t.id == "pdf-txt" {
@@ -109,6 +121,7 @@ enum PDFConv {
             else {
                 throw ConvertError("This PDF contains no extractable text")
             }
+            try runner.checkCancelled()
             let out = try uniqueOutput(for: input, ext: "txt")
             try text.write(to: out, atomically: true, encoding: .utf8)
             return [out]
@@ -132,34 +145,44 @@ enum PDFConv {
         var props: [CFString: Any] = [:]
         if t.id == "pdf-jpg" { props[kCGImageDestinationLossyCompressionQuality] = s.imageQuality }
 
-        for i in 1...count {
-            guard let page = doc.page(at: i) else { continue }
-            let box = page.getBoxRect(.cropBox)
-            let turned = page.rotationAngle % 180 != 0
-            let size = turned ? CGSize(width: box.height, height: box.width) : box.size
-            let pw = Int((size.width * scale).rounded())
-            let ph = Int((size.height * scale).rounded())
-            guard
-                let ctx = CGContext(
-                    data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
-                    space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
-            else { throw ConvertError("Page \(i) is too large to render") }
-            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: pw, height: ph))
-            ctx.interpolationQuality = .high
-            ctx.scaleBy(x: scale, y: scale)
-            ctx.concatenate(
-                page.getDrawingTransform(
-                    .cropBox, rect: CGRect(origin: .zero, size: size),
-                    rotate: 0, preserveAspectRatio: true))
-            ctx.drawPDFPage(page)
-            guard let img = ctx.makeImage() else { throw ConvertError("Couldn't render page \(i)") }
+        // Stop takes effect between pages. Stopped or failed partway, the pages written so far are
+        // removed again: half a folder of pages would look like a finished conversion.
+        let made = folder ?? single
+        do {
+            for i in 1...count {
+                try runner.checkCancelled()
+                guard let page = doc.page(at: i) else { continue }
+                let box = page.getBoxRect(.cropBox)
+                let turned = page.rotationAngle % 180 != 0
+                let size = turned ? CGSize(width: box.height, height: box.width) : box.size
+                let pw = Int((size.width * scale).rounded())
+                let ph = Int((size.height * scale).rounded())
+                guard pw > 0, ph > 0 else { throw ConvertError("Page \(i) has no size") }
+                guard
+                    let ctx = CGContext(
+                        data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+                else { throw ConvertError("Page \(i) is too large to render") }
+                ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+                ctx.fill(CGRect(x: 0, y: 0, width: pw, height: ph))
+                ctx.interpolationQuality = .high
+                ctx.scaleBy(x: scale, y: scale)
+                ctx.concatenate(
+                    page.getDrawingTransform(
+                        .cropBox, rect: CGRect(origin: .zero, size: size),
+                        rotate: 0, preserveAspectRatio: true))
+                ctx.drawPDFPage(page)
+                guard let img = ctx.makeImage() else { throw ConvertError("Couldn't render page \(i)") }
 
-            let out = folder.map { $0.appendingPathComponent("page \(i)").appendingPathExtension(t.ext) } ?? single
-            try ImageConv.write(img, to: out, type: type, label: t.label, props: props)
-            progress(Double(i) / Double(count))
+                let out = folder.map { $0.appendingPathComponent("page \(i)").appendingPathExtension(t.ext) } ?? single
+                try ImageConv.write(img, to: out, type: type, label: t.label, props: props)
+                progress(Double(i) / Double(count))
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: made)
+            throw error
         }
-        return [folder ?? single]
+        return [made]
     }
 }

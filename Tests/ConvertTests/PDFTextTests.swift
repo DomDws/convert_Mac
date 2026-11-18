@@ -37,7 +37,7 @@ final class PDFTextTests {
         let input = try makePDF()
         let target = try #require(Targets.byID("pdf-txt"))
         let error = #expect(throws: (any Error).self) {
-            try PDFConv.convert(input, target, ConvSettings()) { _ in }
+            try PDFConv.convert(input, target, ConvSettings(), runner: Runner()) { _ in }
         }
         #expect(error?.localizedDescription == "This PDF contains no extractable text")
         let output = input.deletingPathExtension().appendingPathExtension("txt")
@@ -47,7 +47,7 @@ final class PDFTextTests {
     @Test func exportsSelectableText() throws {
         let input = try makePDF(text: "Sample text")
         let target = try #require(Targets.byID("pdf-txt"))
-        let outputs = try PDFConv.convert(input, target, ConvSettings()) { _ in }
+        let outputs = try PDFConv.convert(input, target, ConvSettings(), runner: Runner()) { _ in }
         let text = try String(contentsOf: #require(outputs.first), encoding: .utf8)
         #expect(text.trimmingCharacters(in: .whitespacesAndNewlines) == "Sample text")
     }
