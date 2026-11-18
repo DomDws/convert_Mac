@@ -1,0 +1,31 @@
+name: Format or feature request
+description: A format you miss, or something Convert should be able to do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One request per issue, please: it's much easier to answer "MKV to MP4" than a list of ten formats.
+        Worth a look first: the [known limitations](https://github.com/newtonstudios/convert#known-limitations) in the README.
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like?
+      description: For a format, say from which format to which. For anything else, describe what you'd like Convert to do.
+      placeholder: Convert CSV files to Excel (.xlsx).
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What would you use it for?
+      description: A sentence is enough. It helps to decide what's worth building, and how.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you do it today?
+      description: Another app, a website, a Terminal command? If you know a tool that does this conversion well, name it.
+    validations:
+      required: false
