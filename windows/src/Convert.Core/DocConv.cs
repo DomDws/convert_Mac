@@ -21,7 +21,9 @@ public static partial class DocConv
         ".md" or ".markdown" => Src.Markdown,
         ".txt" or ".text" => Src.Text,
         ".html" or ".htm" => Src.Html,
-        _ => Src.Office,
+        ".docx" or ".doc" or ".odt" or ".rtf" => Src.Office,
+        // Anything else (source code, logs, a .ts that is TypeScript) is plain text.
+        _ => Src.Text,
     };
 
     public const string LibreOfficeHint = "Needs LibreOffice: winget install TheDocumentFoundation.LibreOffice";
@@ -35,8 +37,9 @@ public static partial class DocConv
         _ => true,
     };
 
-    public static async Task<string> ConvertAsync(string input, Target t, ConvSettings s)
+    public static async Task<string> ConvertAsync(string input, Target t, ConvSettings s, Runner runner)
     {
+        runner.CheckCancelled();
         var src = SourceOf(input);
         if (NeedsLibreOffice(input, t) && Tools.LibreOffice == null) throw new ConvertException(LibreOfficeHint);
 

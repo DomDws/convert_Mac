@@ -14,7 +14,7 @@ public static class FF
         try
         {
             var json = Proc.RunSync(fp, ["-v", "error", "-show_entries",
-                "format=duration:stream=codec_type,sample_rate,sample_fmt,bits_per_raw_sample:stream_disposition=attached_pic",
+                "format=duration:stream=codec_type,sample_rate,sample_fmt,bits_per_sample,bits_per_raw_sample:stream_disposition=attached_pic",
                 "-of", "json", path], 30_000);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -38,9 +38,7 @@ public static class FF
                         hasAudio = true;
                         if (s.TryGetProperty("sample_rate", out var sr)) int.TryParse(sr.GetString(), out rate);
                         var fmt = s.TryGetProperty("sample_fmt", out var sf) ? sf.GetString() ?? "" : "";
-                        var bits = 0;
-                        if (s.TryGetProperty("bits_per_raw_sample", out var b)) int.TryParse(b.GetString(), out bits);
-                        hires = fmt.StartsWith("s32", StringComparison.Ordinal) || bits > 16;
+                        hires = IsHiRes(fmt, Number(s, "bits_per_sample"), Number(s, "bits_per_raw_sample"));
                     }
                 }
             }
@@ -49,7 +47,26 @@ public static class FF
         catch (Exception) { return new Probe(); }
     }
 
-    public static readonly string[] Common = ["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats"];
+    /// <summary>ffprobe writes some numbers as numbers and some as text.</summary>
+    private static int Number(JsonElement stream, string name)
+    {
+        if (!stream.TryGetProperty(name, out var v)) return 0;
+        if (v.ValueKind == JsonValueKind.Number) return v.TryGetInt32(out var n) ? n : 0;
+        return v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+    }
+
+    /// <summary>
+    /// Whether a source has more than 16 bits per sample: 24/32-bit integer PCM, float PCM,
+    /// 24-bit FLAC/ALAC. Lossy decoders (MP3, AAC, Opus…) also hand out float samples, but
+    /// report no bit depth, so they count as 16-bit and "Match source" doesn't bloat them.
+    /// </summary>
+    public static bool IsHiRes(string sampleFormat, int bitsPerSample, int bitsPerRawSample) =>
+        sampleFormat.StartsWith("s32", StringComparison.Ordinal) || Math.Max(bitsPerSample, bitsPerRawSample) > 16;
+
+    // No -y: ffmpeg must never write over a file that appeared after the output name was chosen.
+    public static readonly string[] Common = ["-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-nostats"];
+
+    private static readonly string[] Depth24 = ["-bits_per_raw_sample", "24"];
 
     // Audio
 
@@ -75,9 +92,10 @@ public static class FF
             case "mp2": a.AddRange(["-c:a", "mp2", "-b:a", $"{br}k"]); break;
             case "wav": a.AddRange(["-c:a", deep ? "pcm_s24le" : "pcm_s16le"]); break;
             case "aiff": a.AddRange(["-c:a", deep ? "pcm_s24be" : "pcm_s16be"]); break;
-            case "flac": a.AddRange(["-c:a", "flac", "-sample_fmt", deep ? "s32" : "s16"]); break;
-            case "alac": a.AddRange(["-c:a", "alac", "-sample_fmt", deep ? "s32p" : "s16p"]); break;
-            case "wv": a.AddRange(["-c:a", "wavpack", "-sample_fmt", deep ? "s32p" : "s16p"]); break;
+            // These store 24-bit audio in 32-bit samples; without the explicit depth WavPack writes 32-bit.
+            case "flac": a.AddRange(["-c:a", "flac", "-sample_fmt", deep ? "s32" : "s16", .. deep ? Depth24 : []]); break;
+            case "alac": a.AddRange(["-c:a", "alac", "-sample_fmt", deep ? "s32p" : "s16p", .. deep ? Depth24 : []]); break;
+            case "wv": a.AddRange(["-c:a", "wavpack", "-sample_fmt", deep ? "s32p" : "s16p", .. deep ? Depth24 : []]); break;
         }
         if (s.SampleRate > 0 && t.SampleRates.Contains(s.SampleRate)) a.AddRange(["-ar", $"{s.SampleRate}"]);
         else if (cap48 && p.SampleRate > 48000) a.AddRange(["-ar", "48000"]);
@@ -164,20 +182,40 @@ public static class FF
     }
 }
 
-/// <summary>Finds a working GPU encoder once: an encoder being compiled into ffmpeg doesn't mean the GPU is there.</summary>
+/// <summary>
+/// Finds a working GPU encoder: an encoder being compiled into ffmpeg doesn't mean the GPU is there.
+/// Found out once per installed ffmpeg, and again when ffmpeg is installed, updated or removed.
+/// </summary>
 public static class HardwareEncoder
 {
-    private static readonly Lazy<string?> vendor = new(Detect);
+    private static readonly object gate = new();
+    private static string? detectedFor;
+    private static string? vendor;
 
     /// <summary>"nvenc", "qsv", "amf" or null (software).</summary>
-    public static string? Vendor => vendor.Value;
+    public static string? Vendor
+    {
+        get
+        {
+            if (Tools.FFmpeg is not { } ff) return null;
+            var stamp = Tools.Stamp(ff);
+            lock (gate)
+            {
+                if (detectedFor != stamp)
+                {
+                    vendor = Detect(ff);
+                    detectedFor = stamp;
+                }
+                return vendor;
+            }
+        }
+    }
 
     /// <summary>Starts detection in the background so the first conversion doesn't wait for it.</summary>
-    public static void Warmup() => Task.Run(() => vendor.Value);
+    public static void Warmup() => Task.Run(() => Vendor);
 
-    private static string? Detect()
+    private static string? Detect(string ff)
     {
-        if (Tools.FFmpeg is not { } ff) return null;
         foreach (var (name, codec) in new[] { ("nvenc", "h264_nvenc"), ("qsv", "h264_qsv"), ("amf", "h264_amf") })
         {
             if (!Tools.HasEncoder(codec)) continue;
@@ -187,7 +225,7 @@ public static class HardwareEncoder
                                   "-frames:v", "3", "-c:v", codec, "-pix_fmt", "yuv420p", "-f", "null", "-"], 15_000);
                 return name;
             }
-            catch (Exception) { }
+            catch (ConvertException) { }
         }
         return null;
     }

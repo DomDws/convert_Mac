@@ -68,7 +68,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void LoadSettings()
     {
         if (target is not { } t) return;
-        var s = store.Settings.TryGetValue(t.Id, out var saved) ? saved.Clone() : new ConvSettings();
+        var s = store.Settings.TryGetValue(t.Id, out var saved) ? saved.Copy() : new ConvSettings();
         if (t.BitrateOptions.Length > 0 && !t.BitrateOptions.Contains(s.AudioBitrate)) s.AudioBitrate = t.DefaultBitrate;
         if (!t.SampleRates.Contains(s.SampleRate)) s.SampleRate = 0;
         Settings = s;
@@ -78,7 +78,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void SettingsChanged()
     {
         if (target is not { } t) return;
-        store.Settings[t.Id] = Settings.Clone();
+        store.Settings[t.Id] = Settings.Copy();
         store.Save();
         Changed(nameof(Warning));
     }
@@ -205,7 +205,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Phase = Phase.Running;
         ChangedAll();
         var list = Files.ToList();
-        var s = Settings.Clone();
+        var s = Settings.Copy();
         var trash = TrashOriginals;
         double n = list.Count;
 

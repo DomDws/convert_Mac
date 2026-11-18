@@ -14,7 +14,9 @@ public sealed class SettingsStore
     private static readonly string FilePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Convert", "settings.json");
 
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
+    // The same names as the Mac's saved settings; reading ignores case, so files from the first
+    // Windows version still load.
+    private static readonly JsonSerializerOptions Json = ConvSettings.Json;
 
     public static SettingsStore Load()
     {

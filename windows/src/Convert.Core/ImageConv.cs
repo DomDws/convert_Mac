@@ -28,8 +28,9 @@ public static class ImageConv
         catch (Exception) { return false; }
     }
 
-    public static string Convert(string input, Target t, ConvSettings s)
+    public static string Convert(string input, Target t, ConvSettings s, Runner runner)
     {
+        runner.CheckCancelled();
         var read = new MagickReadSettings { FrameIndex = 0, FrameCount = 1 };
         MagickImage img;
         try { img = new MagickImage(input, read); }
@@ -49,11 +50,19 @@ public static class ImageConv
             if (t.IsLossyImage) img.Quality = (uint)Math.Round(Math.Clamp(s.ImageQuality, 0.05, 1) * 100);
             if (t.Id == "pdf-img") img.Strip();
 
+            runner.CheckCancelled();
             var out_ = Paths.UniqueOutput(input, t.Ext);
             try
             {
                 if (t.Id == "heic") WindowsHeif.Write(img, out_, s.ImageQuality);
                 else img.Write(out_, FormatFor(t.Id));
+                runner.CheckCancelled();
+            }
+            catch (StoppedException)
+            {
+                // Stopped: no unwanted file stays behind.
+                Paths.TryDelete(out_);
+                throw;
             }
             catch (MagickException e)
             {

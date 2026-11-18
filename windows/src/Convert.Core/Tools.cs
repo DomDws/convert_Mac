@@ -1,103 +1,168 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
+using Microsoft.Win32;
 
 namespace Convert.Core;
 
-/// <summary>Finds the external programs Convert uses.</summary>
+/// <summary>Thrown by a conversion the user stopped.</summary>
+public sealed class StoppedException() : OperationCanceledException("Stopped");
+
+/// <summary>
+/// The external programs Convert uses when they're installed. They're looked up on every use, so
+/// installing ffmpeg or LibreOffice while Convert is open takes effect without a restart.
+/// </summary>
 public static class Tools
 {
     private static readonly string AppDir = AppContext.BaseDirectory;
 
-    public static string? Find(string exe, params string[] extraDirs)
+    /// <summary>
+    /// The folders a tool is looked for in, in this order: <c>tools\</c> next to Convert.exe (a bundled
+    /// ffmpeg), the PATH Convert was started with, the PATH as it is now (installers add to it while
+    /// Convert runs), then winget's link folder.
+    /// </summary>
+    public static IEnumerable<string> Directories()
     {
-        IEnumerable<string> Dirs()
+        yield return Path.Combine(AppDir, "tools");
+        foreach (var d in Split(Environment.GetEnvironmentVariable("PATH"))) yield return d;
+        foreach (var d in Split(RegistryPath(Registry.CurrentUser, "Environment"))) yield return d;
+        foreach (var d in Split(RegistryPath(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"))) yield return d;
+        yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Links");
+    }
+
+    private static readonly string[] LibreOfficeDirectories =
+    [
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "LibreOffice", "program"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "LibreOffice", "program"),
+    ];
+
+    private static IEnumerable<string> Split(string? path) =>
+        (path ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(d => d.Trim('"'));
+
+    private static string? RegistryPath(RegistryKey hive, string key)
+    {
+        try
         {
-            yield return Path.Combine(AppDir, "tools");
-            yield return AppDir;
-            foreach (var d in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
-                yield return d.Trim('"');
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            yield return Path.Combine(local, "Microsoft", "WinGet", "Links");
-            foreach (var d in extraDirs) yield return d;
+            using var k = hive.OpenSubKey(key);
+            return k?.GetValue("Path") as string;
         }
-        foreach (var dir in Dirs())
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return null; }
+    }
+
+    /// <summary>The first of <paramref name="directories"/> that holds <paramref name="exe"/>.</summary>
+    public static string? Find(string exe, IEnumerable<string> directories)
+    {
+        foreach (var dir in directories)
         {
+            // A relative entry would mean "whatever folder Convert was started in": the folder of the
+            // files being converted, where anyone can have put an ffmpeg.exe.
+            if (!Path.IsPathFullyQualified(dir)) continue;
             try
             {
-                var p = Path.Combine(Environment.ExpandEnvironmentVariables(dir), exe);
+                var p = Path.Combine(dir, exe);
                 if (File.Exists(p)) return p;
             }
             catch (ArgumentException) { }
         }
-        return FindInWingetPackages(exe);
+        return null;
     }
 
-    /// <summary>winget installs portable packages under Packages\&lt;id&gt;\…\bin without always linking them.</summary>
-    private static string? FindInWingetPackages(string exe)
+    public static string? FFmpeg => Find("ffmpeg.exe", Directories());
+
+    public static string? FFprobe
     {
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Packages");
-        if (!Directory.Exists(root)) return null;
+        get
+        {
+            // The one that came with the ffmpeg in use, when there is one.
+            var sibling = FFmpeg is { } ff ? Path.Combine(Path.GetDirectoryName(ff)!, "ffprobe.exe") : null;
+            return sibling != null && File.Exists(sibling) ? sibling : Find("ffprobe.exe", Directories());
+        }
+    }
+
+    public static string? LibreOffice => Find("soffice.exe", Directories().Concat(LibreOfficeDirectories));
+
+    /// <summary>
+    /// Identifies one installed copy of a tool: its path, size and date. What was found out about a
+    /// tool (its encoders, whether the GPU works with it) is kept for as long as this stays the same.
+    /// </summary>
+    public static string Stamp(string path)
+    {
         try
         {
-            return Directory.EnumerateDirectories(root)
-                .SelectMany(d => Directory.EnumerateFiles(d, exe, new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 4 }))
-                .OrderByDescending(File.GetLastWriteTimeUtc)
-                .FirstOrDefault();
+            var info = new FileInfo(path);
+            return $"{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
         }
-        catch (IOException) { return null; }
-        catch (UnauthorizedAccessException) { return null; }
+        catch (IOException) { return path; }
+        catch (UnauthorizedAccessException) { return path; }
     }
 
-    private static readonly Lazy<string?> ffmpeg = new(() => Find("ffmpeg.exe"));
-    private static readonly Lazy<string?> ffprobe = new(() =>
+    private static readonly object encoderGate = new();
+    private static string? encodersOf;
+    private static HashSet<string> encoders = [];
+
+    /// <summary>Whether the installed ffmpeg has this encoder. Asked again when ffmpeg changes.</summary>
+    public static bool HasEncoder(string name)
     {
-        var ff = ffmpeg.Value;
-        var sibling = ff == null ? null : Path.Combine(Path.GetDirectoryName(ff)!, "ffprobe.exe");
-        return sibling != null && File.Exists(sibling) ? sibling : Find("ffprobe.exe");
-    });
-    private static readonly Lazy<string?> soffice = new(() => Find("soffice.exe",
-        @"%ProgramFiles%\LibreOffice\program", @"%ProgramFiles(x86)%\LibreOffice\program"));
+        if (FFmpeg is not { } ff) return false;
+        var stamp = Stamp(ff);
+        lock (encoderGate)
+        {
+            if (encodersOf != stamp)
+            {
+                encoders = ListEncoders(ff);
+                encodersOf = stamp;
+            }
+            return encoders.Contains(name);
+        }
+    }
 
-    public static string? FFmpeg => ffmpeg.Value;
-    public static string? FFprobe => ffprobe.Value;
-    public static string? LibreOffice => soffice.Value;
-
-    private static readonly Lazy<HashSet<string>> encoders = new(() =>
+    private static HashSet<string> ListEncoders(string ffmpeg)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
-        if (FFmpeg is not { } ff) return set;
         try
         {
-            var text = Proc.RunSync(ff, ["-hide_banner", "-encoders"]);
-            foreach (var line in text.Split('\n'))
+            foreach (var line in Proc.RunSync(ffmpeg, ["-hide_banner", "-encoders"]).Split('\n'))
             {
                 var parts = line.Trim().Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length >= 2 && parts[0].Length == 6) set.Add(parts[1]);
             }
         }
-        catch (Exception) { }
+        catch (ConvertException) { }
         return set;
-    });
-
-    public static bool HasEncoder(string name) => encoders.Value.Contains(name);
+    }
 }
 
 public static class Proc
 {
-    /// <summary>Runs a tool to completion and returns stdout. Throws with the last stderr line on failure.</summary>
-    public static string RunSync(string exe, IEnumerable<string> args, int timeoutMs = 120_000)
+    /// <summary>
+    /// How much of a tool's error output is kept. Only the end matters (the last line is the message
+    /// shown), so a tool that logs without end can't use up memory.
+    /// </summary>
+    public const int KeptErrorOutput = 64 * 1024;
+
+    /// <summary>
+    /// Runs a tool to completion and returns stdout. Throws with the last stderr line on failure.
+    /// With a <paramref name="runner"/>, Stop ends the tool.
+    /// </summary>
+    public static string RunSync(string exe, IEnumerable<string> args, int timeoutMs = 120_000, Runner? runner = null)
     {
+        runner?.CheckCancelled();
+        var name = Path.GetFileNameWithoutExtension(exe);
         using var p = Start(exe, args);
+        using var tracked = runner?.Track(p);
+        // Both pipes are read at the same time: a tool that fills one while we wait on the other
+        // would block for good.
         var stdout = p.StandardOutput.ReadToEndAsync();
-        var stderr = p.StandardError.ReadToEndAsync();
+        var stderr = ReadTailAsync(p.StandardError);
         if (!p.WaitForExit(timeoutMs))
         {
-            try { p.Kill(true); } catch (InvalidOperationException) { }
-            throw new ConvertException($"{Path.GetFileNameWithoutExtension(exe)} took too long");
+            Kill(p);
+            throw new ConvertException($"{name} took too long");
         }
         p.WaitForExit();
-        if (p.ExitCode != 0)
-            throw new ConvertException(LastLine(stderr.Result) ?? $"{Path.GetFileNameWithoutExtension(exe)} failed (exit code {p.ExitCode})");
+        runner?.CheckCancelled();
+        if (p.ExitCode != 0) throw new ConvertException(LastLine(stderr.Result) ?? $"{name} failed");
         return stdout.Result;
     }
 
@@ -114,99 +179,163 @@ public static class Proc
             StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
-        var p = Process.Start(psi) ?? throw new ConvertException($"Couldn't start {Path.GetFileName(exe)}");
+        Process p;
+        try { p = Process.Start(psi) ?? throw new ConvertException($"Couldn't start {Path.GetFileName(exe)}"); }
+        catch (Win32Exception) { throw new ConvertException($"Couldn't start {Path.GetFileName(exe)}"); }
         p.StandardInput.Close();
         return p;
+    }
+
+    /// <summary>Ends a tool and everything it started (soffice.exe, for one, only starts soffice.bin).</summary>
+    public static void Kill(Process? p)
+    {
+        try { p?.Kill(entireProcessTree: true); }
+        catch (InvalidOperationException) { }   // already gone
+        catch (Win32Exception) { }
+        catch (NotSupportedException) { }
+    }
+
+    /// <summary>Reads a tool's output to its end, keeping only the last <see cref="KeptErrorOutput"/> characters.</summary>
+    public static async Task<string> ReadTailAsync(TextReader reader, int kept = KeptErrorOutput)
+    {
+        var text = new StringBuilder();
+        var buffer = new char[8192];
+        int n;
+        while ((n = await reader.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        {
+            text.Append(buffer, 0, n);
+            if (text.Length > 2 * kept) text.Remove(0, text.Length - kept);
+        }
+        if (text.Length > kept) text.Remove(0, text.Length - kept);
+        return text.ToString();
     }
 
     public static string? LastLine(string text) =>
         text.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0);
 }
 
-public static class Paths
+/// <summary>
+/// Turns ffmpeg's <c>-progress</c> output into fractions done (0…1). The output arrives in chunks of
+/// any size, so a line can be cut in two; the unfinished end is kept until the rest of it arrives.
+/// </summary>
+public sealed class ProgressParser(double duration)
 {
-    /// <summary>Next free file name next to the input: "name.ext", then "name 2.ext", …</summary>
-    public static string UniqueOutput(string input, string ext, string suffix = "")
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(input))!;
-        var name = Path.GetFileNameWithoutExtension(input) + suffix;
-        var path = Path.Combine(dir, $"{name}.{ext}");
-        for (var n = 2; File.Exists(path) || Directory.Exists(path); n++)
-            path = Path.Combine(dir, $"{name} {n}.{ext}");
-        return path;
-    }
+    private readonly StringBuilder pending = new();
 
-    public static string UniqueFolder(string input, string suffix)
+    public List<double> Feed(ReadOnlySpan<char> chunk)
     {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(input))!;
-        var name = Path.GetFileNameWithoutExtension(input) + suffix;
-        var path = Path.Combine(dir, name);
-        for (var n = 2; File.Exists(path) || Directory.Exists(path); n++)
-            path = Path.Combine(dir, $"{name} {n}");
-        return path;
-    }
-
-    public static string TempDir()
-    {
-        var d = Path.Combine(Path.GetTempPath(), "Convert", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(d);
-        return d;
-    }
-
-    public static void TryDelete(string path)
-    {
-        try
+        pending.Append(chunk);
+        var fractions = new List<double>();
+        while (true)
         {
-            if (Directory.Exists(path)) Directory.Delete(path, true);
-            else if (File.Exists(path)) File.Delete(path);
+            var text = pending.ToString();
+            var newline = text.IndexOf('\n');
+            if (newline < 0) break;
+            var line = text[..newline];
+            pending.Remove(0, newline + 1);
+            const string key = "out_time_us=";
+            if (duration > 0 && line.StartsWith(key, StringComparison.Ordinal)
+                && double.TryParse(line.AsSpan(key.Length).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var us) && us >= 0)
+                fractions.Add(Math.Min(1, us / 1_000_000 / duration));
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        return fractions;
     }
 }
 
-/// <summary>Runs ffmpeg-style processes with live progress and cancellation.</summary>
+/// <summary>
+/// One batch of conversions: runs ffmpeg-style processes with live progress, and carries Stop.
+/// Stop kills the process that's running; work done in-process calls <see cref="CheckCancelled"/>
+/// between steps, or watches <see cref="Token"/>.
+/// </summary>
 public sealed class Runner
 {
-    private Process? current;
-    private volatile bool cancelled;
     private readonly object gate = new();
+    private Process? current;
+    private bool cancelled;
+    private CancellationTokenSource source = new();
+
+    public bool IsCancelled
+    {
+        get { lock (gate) return cancelled; }
+    }
+
+    /// <summary>Cancelled by Stop, for work that waits on something (a page being printed, a file being written).</summary>
+    public CancellationToken Token
+    {
+        get { lock (gate) return source.Token; }
+    }
 
     public void Cancel()
     {
-        cancelled = true;
+        CancellationTokenSource stopped;
         lock (gate)
         {
-            try { current?.Kill(true); } catch (InvalidOperationException) { }
+            cancelled = true;
+            Proc.Kill(current);
+            stopped = source;
+        }
+        stopped.Cancel();
+    }
+
+    /// <summary>Clears an earlier Stop, before a new batch.</summary>
+    public void Reset()
+    {
+        lock (gate)
+        {
+            if (!cancelled) return;
+            cancelled = false;
+            source = new CancellationTokenSource();
         }
     }
 
-    public void Reset() => cancelled = false;
-    public bool IsCancelled => cancelled;
+    public void CheckCancelled()
+    {
+        if (IsCancelled) throw new StoppedException();
+    }
+
+    /// <summary>Makes <paramref name="p"/> the process Stop ends, until the returned object is disposed.</summary>
+    public IDisposable Track(Process p)
+    {
+        lock (gate)
+        {
+            current = p;
+            if (cancelled) Proc.Kill(p);
+        }
+        return new Tracked(this, p);
+    }
+
+    private sealed class Tracked(Runner runner, Process p) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (runner.gate)
+            {
+                if (ReferenceEquals(runner.current, p)) runner.current = null;
+            }
+        }
+    }
 
     public async Task RunAsync(string exe, IEnumerable<string> args, double duration, Action<double> progress)
     {
-        if (cancelled) throw new OperationCanceledException();
+        // A tool isn't even started once Stop was pressed.
+        CheckCancelled();
+        var name = Path.GetFileNameWithoutExtension(exe);
         using var p = Proc.Start(exe, args);
-        lock (gate) current = p;
-        try
+        using var tracked = Track(p);
+        var err = Proc.ReadTailAsync(p.StandardError);
+        var parser = new ProgressParser(duration);
+        var buffer = new char[4096];
+        int n;
+        while ((n = await p.StandardOutput.ReadAsync(buffer).ConfigureAwait(false)) > 0)
         {
-            var err = p.StandardError.ReadToEndAsync();
-            string? line;
-            while ((line = await p.StandardOutput.ReadLineAsync()) != null)
-            {
-                if (duration > 0 && line.StartsWith("out_time_us=", StringComparison.Ordinal)
-                    && double.TryParse(line.AsSpan(12), System.Globalization.CultureInfo.InvariantCulture, out var us) && us >= 0)
-                    progress(Math.Min(1, us / 1_000_000 / duration));
-            }
-            await p.WaitForExitAsync();
-            if (cancelled) throw new OperationCanceledException();
-            if (p.ExitCode != 0)
-                throw new ConvertException(Proc.LastLine(await err) ?? $"ffmpeg exited with code {p.ExitCode}");
+            foreach (var fraction in parser.Feed(buffer.AsSpan(0, n))) progress(fraction);
         }
-        finally
-        {
-            lock (gate) current = null;
-        }
+        await p.WaitForExitAsync().ConfigureAwait(false);
+        if (IsCancelled) throw new StoppedException();
+        if (p.ExitCode == 0) return;
+        // An exit code in this range is an exception code: the tool crashed, and whatever it logged
+        // before that isn't the reason.
+        if (unchecked((uint)p.ExitCode) >= 0xC0000000) throw new ConvertException($"{name} quit unexpectedly");
+        throw new ConvertException(Proc.LastLine(await err.ConfigureAwait(false)) ?? $"{name} exited with code {p.ExitCode}");
     }
 }

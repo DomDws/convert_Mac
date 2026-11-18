@@ -76,12 +76,7 @@ public sealed class ExplorerCommand : IExplorerCommand
             var paths = items == null ? [] : Paths(items).ToList();
             var args = string.Join(" ", paths.Select(Quote));
             // Stay well below the 32,767-character command-line limit.
-            if (args.Length > 30_000)
-            {
-                var list = Path.Combine(Path.GetTempPath(), $"convert-{Guid.NewGuid():N}.txt");
-                File.WriteAllLines(list, paths, Encoding.UTF8);
-                args = "--files " + Quote(list);
-            }
+            if (args.Length > 30_000) args = "--files " + Quote(SelectionList.Write(paths));
             AllowSetForegroundWindow(-1);   // let the new window come to the front
             Process.Start(new ProcessStartInfo(AppExe, args) { UseShellExecute = false, WorkingDirectory = AppDir })?.Dispose();
             return S_OK;
@@ -144,7 +139,10 @@ public sealed class ExplorerCommand : IExplorerCommand
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Convert");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "shell.log"), $"{DateTime.Now:O} {e}\n");
+            var log = Path.Combine(dir, "shell.log");
+            // Explorer asks about every selection, so an error that repeats would fill the disk: start over at 256 KB.
+            if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Delete(log);
+            File.AppendAllText(log, $"{DateTime.Now:O} {e}\n");
         }
         catch (Exception) { }
     }

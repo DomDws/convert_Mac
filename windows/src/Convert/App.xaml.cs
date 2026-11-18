@@ -1,5 +1,6 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Text.Json;
+using System.Text;
 using System.Windows;
 using Convert.Core;
 
@@ -23,7 +24,7 @@ public partial class App : Application
         if (args.Length > 0 && args[0] == "--cli")
         {
             Cli.Attach();
-            Cli.RunAsync(args[1..]).ContinueWith(t => Dispatcher.Invoke(() => Shutdown(t.Result)));
+            Cli.RunAsync(args[1..]).ContinueWith(t => Dispatcher.Invoke(() => Shutdown(t.IsFaulted ? 1 : t.Result)));
             return;
         }
 
@@ -32,16 +33,7 @@ public partial class App : Application
         {
             // The context menu passes long selections as a list file (one path per line) to stay under
             // the command-line length limit.
-            if (args[i] == "--files" && i + 1 < args.Length)
-            {
-                var list = args[++i];
-                try
-                {
-                    files.AddRange(File.ReadAllLines(list).Where(l => l.Length > 0));
-                    File.Delete(list);
-                }
-                catch (IOException) { }
-            }
+            if (args[i] == "--files" && i + 1 < args.Length) files.AddRange(SelectionList.Read(args[++i]));
             else files.Add(args[i]);
         }
 
@@ -50,43 +42,89 @@ public partial class App : Application
     }
 }
 
-/// <summary>Test mode: <c>Convert.exe --cli &lt;target-id&gt; file…</c> converts with default settings.</summary>
+/// <summary>
+/// Test mode: <c>Convert.exe --cli &lt;target-id&gt; file…</c> converts with default settings and prints the results.
+/// <c>CONVERT_SETTINGS</c> (JSON) overrides individual settings, e.g. <c>{"hardware": false}</c>.
+/// <c>Convert.exe --cli --targets file…</c> lists the target IDs the window would offer for those files.
+/// The output and exit codes (0 fine, 1 a conversion failed, 2 wrong usage) are the Mac app's.
+/// </summary>
 internal static class Cli
 {
     [DllImport("kernel32.dll")]
     private static extern bool AttachConsole(int processId);
 
     /// <summary>Convert.exe is a GUI app; borrow the parent console so Console output shows up.</summary>
-    public static void Attach() => AttachConsole(-1);
+    public static void Attach()
+    {
+        AttachConsole(-1);
+        // "→" and file names outside the console's code page.
+        try { Console.OutputEncoding = new UTF8Encoding(false); }
+        catch (IOException) { }
+    }
 
     public static async Task<int> RunAsync(string[] args)
     {
+        if (args.Length >= 2 && args[0] == "--targets") return ListTargets(args[1..]);
+
         Target? target = args.Length >= 2 ? Targets.ById(args[0]) : null;
         if (target == null)
         {
             Console.WriteLine("usage: Convert.exe --cli <target> file…");
+            Console.WriteLine("       Convert.exe --cli --targets file…");
             Console.WriteLine("targets: " + string.Join(" ", Targets.All.Select(t => t.Id)));
             return 2;
         }
         var settings = new ConvSettings();
         if (Environment.GetEnvironmentVariable("CONVERT_SETTINGS") is { Length: > 0 } json)
-            settings = JsonSerializer.Deserialize<ConvSettings>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? settings;
+        {
+            try { settings = ConvSettings.WithOverrides(json); }
+            catch (ConvertException e)
+            {
+                Console.WriteLine($"CONVERT_SETTINGS is not valid: {e.Message}");
+                return 2;
+            }
+        }
 
         var failed = false;
-        foreach (var path in args[1..])
+        foreach (var arg in args[1..])
         {
-            var started = DateTime.Now;
+            var path = Path.GetFullPath(arg);
+            var name = Path.GetFileName(path);
+            var started = DateTime.UtcNow;
             try
             {
-                var outs = await Converter.ConvertAsync(Path.GetFullPath(path), target, settings, new Runner(), _ => { });
-                Console.WriteLine($"OK   {Path.GetFileName(path)} → {string.Join(", ", outs.Select(Path.GetFileName))} ({(DateTime.Now - started).TotalSeconds:0.00}s)");
+                var outs = await Converter.ConvertAsync(path, target, settings, new Runner(), _ => { });
+                var secs = (DateTime.UtcNow - started).TotalSeconds.ToString("0.00", CultureInfo.InvariantCulture);
+                Console.WriteLine($"OK   {name} → {string.Join(", ", outs.Select(Path.GetFileName))} ({secs}s)");
+                if (outs.FirstOrDefault(o => OutputFolder.IsFallback(o, path)) is { } moved)
+                    Console.WriteLine($"     saved to {Path.GetDirectoryName(moved)}: the original's folder is read-only");
             }
             catch (Exception ex)
             {
                 failed = true;
-                Console.WriteLine($"FAIL {Path.GetFileName(path)}: {ex.Message}");
+                Console.WriteLine($"FAIL {name}: {ex.Message}");
             }
         }
         return failed ? 1 : 0;
+    }
+
+    /// <summary>Prints one target ID per line, the same choices the window offers for these files.</summary>
+    private static int ListTargets(string[] paths)
+    {
+        var kinds = new HashSet<MediaKind>();
+        foreach (var path in paths)
+        {
+            if (Sniff.KindOf(Path.GetFullPath(path)) is not { } kind)
+            {
+                Console.WriteLine($"unsupported file: {Path.GetFileName(path)}");
+                return 1;
+            }
+            kinds.Add(kind);
+        }
+        foreach (var (_, targets) in Targets.Groups(kinds))
+        {
+            foreach (var target in targets) Console.WriteLine(target.Id);
+        }
+        return 0;
     }
 }

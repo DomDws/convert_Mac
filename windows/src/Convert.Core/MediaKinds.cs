@@ -6,7 +6,7 @@ namespace Convert.Core;
 /// It is also the single source for the extensions the context menu registers for
 /// (<c>Convert.exe --list-extensions</c> → packaging manifest).
 /// </remarks>
-public enum MediaKind { Audio, Video, Image, Pdf, Document }
+public enum MediaKind { Audio, Video, Image, Pdf, Document, Font }
 
 public static class MediaKinds
 {
@@ -22,6 +22,7 @@ public static class MediaKinds
                              "orf", "rw2", "raf", "pef", "srw", "erf", "3fr", "svg"],
         [MediaKind.Pdf] = ["pdf"],
         [MediaKind.Document] = ["docx", "doc", "odt", "rtf", "txt", "text", "md", "markdown", "html", "htm"],
+        [MediaKind.Font] = ["ttf", "otf", "ttc", "otc", "woff", "woff2"],
     };
 
     private static readonly Dictionary<string, MediaKind> ByExtension =

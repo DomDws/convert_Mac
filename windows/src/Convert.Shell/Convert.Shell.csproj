@@ -10,5 +10,6 @@
   <ItemGroup>
     <!-- The only code shared with Core: extension → kind. -->
     <Compile Include="..\Convert.Core\MediaKinds.cs" Link="MediaKinds.cs" />
+    <Compile Include="..\Convert.Core\SelectionList.cs" Link="SelectionList.cs" />
   </ItemGroup>
 </Project>
