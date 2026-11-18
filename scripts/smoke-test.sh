@@ -291,7 +291,7 @@ paper_check "pdf-doc:letter" '{"paperA4": false}' "612 792"
 # One conversion of every kind.
 
 RO="$OUT/read-only" FALLBACK="$OUT/fallback"
-RO_CASES="sample.png:jpg sample.wav:mp3 sample.mp4:gif sample.md:pdf-doc sample.txt:docx sample.pdf:pdf-png sample.pdf:pdf-txt"
+RO_CASES="sample.png:jpg sample.wav:mp3 sample.mp4:gif sample.md:pdf-doc sample.txt:docx sample.pdf:pdf-png sample.pdf:pdf-txt sample.pdf:pdf-docx"
 mkdir -p "$RO" "$FALLBACK"
 for pair in $RO_CASES; do
   [[ -f "$SAMPLES/${pair%%:*}" ]] && cp "$SAMPLES/${pair%%:*}" "$RO/"

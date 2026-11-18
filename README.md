@@ -40,7 +40,7 @@ A small window opens showing only the formats that make sense for what you selec
 | 🎬 **Video** (mp4, mov, mkv, webm, avi, …) | MP4 (H.264 / HEVC / AV1), MOV (ProRes 422), WebM (VP9), MKV, animated GIF, **or any audio format** (pulls out the soundtrack) |
 | 🖼️ **Images** (heic, jpg, png, webp, tiff, raw, …) | JPEG, PNG, HEIC, AVIF, WebP, TIFF, GIF, BMP, PDF |
 | 📄 **Documents** (docx, doc, odt, rtf, html, txt, md) | PDF, Word (DOCX / DOC), ODT, RTF, plain text, HTML |
-| 📕 **PDF** | PNG or JPEG images (one per page), plain text |
+| 📕 **PDF** | PNG or JPEG images (one per page), Word (DOCX), ODT, RTF or plain text (the text only, see below) |
 
 **Settings** live under **Advanced** (collapsed until you open it; remembered per format):
 
@@ -52,6 +52,8 @@ A small window opens showing only the formats that make sense for what you selec
 - **PDF → images:** resolution (72 / 150 / 300 dpi)
 
 You can also open the app on its own and drag files onto the window.
+
+**PDF to Word** gives you the PDF's text as an editable document: paragraphs are put back together, and fonts, sizes, bold and italic are kept where the PDF has them. Pictures, tables and the page layout are not carried over, and a scanned PDF (pictures of pages) has no text to take.
 
 ---
 
@@ -114,6 +116,7 @@ Convert has no network code, no analytics and no accounts. It reads the files yo
 
 - **Markdown** covers the common syntax (headings, bold, italic, lists, task lists, tables, code, quotes, links). Footnotes, HTML inside Markdown and images aren't rendered.
 - **Excel and PowerPoint** files aren't supported (they'd need LibreOffice).
+- **PDF to Word** carries over text only (see above).
 - **Converting images** keeps only the first frame of an animated GIF or a multi-image HEIC.
 - The **downloaded** app isn't notarized by Apple (see the install notes above).
 
@@ -137,7 +140,7 @@ The Finder menu item is a tiny Automator Quick Action (`~/Library/Services/Conve
 | `Sources/Convert/Converter.swift`, `Process.swift` | Runs one conversion; external tools, Stop, where output goes |
 | `Sources/Convert/FFmpeg.swift` | ffmpeg arguments for each audio/video format |
 | `Sources/Convert/ImageConv.swift` | Image conversion |
-| `Sources/Convert/DocConv.swift` | Document conversion, document → PDF, PDF → images/text |
+| `Sources/Convert/DocConv.swift`, `PDFText.swift` | Document conversion, document → PDF, PDF → images/text/Word |
 | `Sources/Convert/Markdown.swift` | Markdown → HTML |
 | `Sources/Convert/ConvertModel.swift`, `ContentView.swift` | The window and its state |
 | `Sources/Convert/QuickAction.swift` | Installs/removes the Finder Quick Action |

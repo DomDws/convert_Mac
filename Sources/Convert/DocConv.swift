@@ -157,6 +157,7 @@ enum PDFConv {
             try text.write(to: out, atomically: true, encoding: .utf8)
             return [out]
         }
+        if t.isPDFText { return [try document(input, t, runner: runner, progress: progress)] }
 
         guard let doc = CGPDFDocument(input as CFURL) else { throw ConvertError("Couldn't open this PDF") }
         if doc.isEncrypted && !doc.isUnlocked { throw ConvertError("This PDF is password-protected") }
@@ -215,5 +216,39 @@ enum PDFConv {
             throw error
         }
         return [made]
+    }
+
+    /// PDF → Word, OpenDocument or Rich Text: the text, rebuilt into paragraphs (see PDFText),
+    /// with its fonts, sizes and colours. No images, tables or page layout ("text only").
+    static func document(
+        _ input: URL, _ t: Target, runner: Runner, progress: @Sendable (Double) -> Void
+    ) throws -> URL {
+        guard let doc = PDFDocument(url: input) else { throw ConvertError("Couldn't open this PDF") }
+        if doc.isLocked { throw ConvertError("This PDF is password-protected") }
+        let text = NSMutableAttributedString()
+        for i in 0..<doc.pageCount {
+            try runner.checkCancelled()
+            if let page = doc.page(at: i) { text.append(PDFText.paragraphs(on: page)) }
+            progress(Double(i + 1) / Double(doc.pageCount))
+        }
+        guard text.string.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil else {
+            throw ConvertError("This PDF contains no extractable text")
+        }
+        let types: [String: NSAttributedString.DocumentType] = [
+            "docx": .officeOpenXML, "odt": .openDocument, "rtf": .rtf,
+        ]
+        let attrs: [NSAttributedString.DocumentAttributeKey: Any] = [.documentType: types[t.ext] ?? .rtf]
+        let data = try text.data(from: NSRange(location: 0, length: text.length), documentAttributes: attrs)
+        try runner.checkCancelled()
+        let out = try uniqueOutput(for: input, ext: t.ext)
+        do {
+            try data.write(to: out, options: .atomic)
+            try runner.checkCancelled()
+        } catch {
+            // Stopped or failed: no unwanted or half-written file stays behind.
+            try? FileManager.default.removeItem(at: out)
+            throw error
+        }
+        return out
     }
 }

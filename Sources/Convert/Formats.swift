@@ -172,6 +172,9 @@ enum Targets {
                 [
                     ("pdf-png", "PNG (one per page)", "png"),
                     ("pdf-jpg", "JPEG (one per page)", "jpg"),
+                    ("pdf-docx", "Word (DOCX, text only)", "docx"),
+                    ("pdf-odt", "OpenDocument (ODT, text only)", "odt"),
+                    ("pdf-rtf", "Rich Text (RTF, text only)", "rtf"),
                     ("pdf-txt", "Plain Text", "txt"),
                 ])
     }()
@@ -245,8 +248,11 @@ extension Target {
 
     var hasChannelOption: Bool { id != "ogg" }
 
+    /// PDF → a text format: the words and their fonts, without pictures or page layout.
+    var isPDFText: Bool { ["pdf-txt", "pdf-docx", "pdf-odt", "pdf-rtf"].contains(id) }
+
     /// Whether the panel has anything to show under "Advanced" for this format.
-    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && id != "pdf-txt" }
+    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && !isPDFText }
 }
 
 struct ConvSettings: Codable, Equatable {

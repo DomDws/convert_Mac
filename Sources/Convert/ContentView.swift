@@ -428,7 +428,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var pdf: some View {
-        if target.id != "pdf-txt" {
+        if !target.isPDFText {
             FormRow("Resolution") {
                 menu($s.pdfDPI, [(72, "72 dpi (screen)"), (150, "150 dpi"), (300, "300 dpi (print)")])
             }
