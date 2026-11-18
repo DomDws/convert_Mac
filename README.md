@@ -20,7 +20,7 @@
 </p>
 
 > [!NOTE]
-> **This app is vibe coded.** It was built in an afternoon by chatting with an AI coding assistant (Claude), then tested by converting a pile of sample files. It works on my machine and the code is small enough to read, but it hasn't been battle-tested or reviewed by anyone. Keep your originals (Convert never overwrites them anyway), and please [open an issue](../../issues) if something breaks.
+> **This app is vibe coded.** It started as an afternoon of chatting with an AI coding assistant (Claude) and is now built in the open by a growing group of contributors. The code is small enough to read, but the app is young. Keep your originals (Convert never overwrites them anyway), and please [open an issue](../../issues) if something breaks.
 
 ---
 
