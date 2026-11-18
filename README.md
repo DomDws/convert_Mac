@@ -162,7 +162,6 @@ scripts/check.sh                 # everything below
 scripts/check.sh format          # swift-format lint; `scripts/check.sh format --fix` reformats
 scripts/check.sh build           # debug build and tests (warnings are errors), then the release app
 scripts/check.sh smoke           # rebuild the release app, then run the conversion smoke test
-scripts/check.sh site            # syntax-check site/api/*.mjs (needs node)
 ```
 
 The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text, a PDF, and two `.ts` files: TypeScript source and an MPEG transport stream) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off; on a machine without a hardware encoder, the normal run checks that the app falls back to the software one.

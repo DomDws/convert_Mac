@@ -1,12 +1,11 @@
 #!/bin/bash
 # Runs the same checks as CI (.github/workflows/ci.yml).
 #
-#   scripts/check.sh                 everything: format, build, smoke, site
+#   scripts/check.sh                 everything: format, build, smoke
 #   scripts/check.sh format [--fix]  swift-format lint (--fix reformats in place)
 #   scripts/check.sh build           debug build + tests (warnings are errors), then the release app
 #   scripts/check.sh smoke [--no-build] [smoke-test.sh options…]
 #                                    rebuild the release app, then run scripts/smoke-test.sh
-#   scripts/check.sh site            syntax-check the website's server functions
 #
 # With only the Command Line Tools installed (no Xcode), the universal app can't be built
 # (that needs Xcode's build system), so build/smoke use a native release build instead.
@@ -96,31 +95,16 @@ check_smoke() {
   scripts/smoke-test.sh ${args[@]+"${args[@]}"} "$(release_binary)"
 }
 
-check_site() {
-  say "node --check site/api/*.mjs"
-  if ! command -v node >/dev/null; then
-    echo "SKIP: node isn't installed (CI checks this)."
-    return 0
-  fi
-  local f
-  for f in site/api/*.mjs; do
-    node --check "$f"
-    echo "ok   $f"
-  done
-}
-
 case "$STEP" in
   format) check_format "$@" ;;
   build) check_build ;;
   smoke) check_smoke "$@" ;;
-  site) check_site ;;
   all)
     check_format
     check_build
     check_smoke --no-build
-    check_site
     say "All checks passed"
     ;;
   -h|--help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
-  *) echo "unknown step: $STEP (format, build, smoke, site, or nothing for all)" >&2; exit 2 ;;
+  *) echo "unknown step: $STEP (format, build, smoke, or nothing for all)" >&2; exit 2 ;;
 esac
