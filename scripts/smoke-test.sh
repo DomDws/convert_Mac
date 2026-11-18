@@ -18,8 +18,8 @@
 # go to the fallback folder instead.
 #
 # Formats with a hardware encoder (H.264, HEVC, ProRes, MKV) also run with hardware
-# encoding off. The hardware runs are skipped when this machine has no such encoder
-# (e.g. GitHub's macOS VMs); the software runs must always pass.
+# encoding off. On a machine without such an encoder (e.g. GitHub's macOS VMs) the hardware
+# run still has to pass: the app falls back to the software encoder by itself.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
@@ -106,14 +106,6 @@ run_conversion() {
 # Whether ffmpeg can use this encoder here (hardware encoders are missing on most VMs).
 encoder_works() {
   "$FFMPEG" -v error -f lavfi -i testsrc2=size=320x240:rate=30:duration=0.5 -c:v "$1" -f null - >/dev/null 2>&1
-}
-
-hw_encoder_for() {
-  case "$1" in
-    mp4-h264|mkv) echo h264_videotoolbox ;;
-    mp4-hevc) echo hevc_videotoolbox ;;
-    mov-prores) echo prores_videotoolbox ;;
-  esac
 }
 
 echo "Convert smoke test"
@@ -221,7 +213,7 @@ if [[ -n "$FFMPEG" ]]; then
   for enc in h264_videotoolbox hevc_videotoolbox prores_videotoolbox; do
     if encoder_works "$enc"; then HW_OK="$HW_OK$enc "; fi
   done
-  echo "Hardware encoders available:${HW_OK% }"
+  echo "Hardware encoders here:${HW_OK% } (formats whose encoder is missing test the software fallback)"
   echo
 fi
 
@@ -262,11 +254,7 @@ for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt scri
     fi
 
     if [[ "$HW_TARGETS" == *" $target "* ]]; then
-      if [[ "$HW_OK" == *" $(hw_encoder_for "$target") "* ]]; then
-        run_conversion "$target" "$target" "$sample"
-      else
-        skip "$target" "$name" "no $(hw_encoder_for "$target") on this machine; software run below"
-      fi
+      run_conversion "$target" "$target" "$sample"
       run_conversion "$target+sw" "$target" "$sample" '{"hardware": false}'
     else
       run_conversion "$target" "$target" "$sample"

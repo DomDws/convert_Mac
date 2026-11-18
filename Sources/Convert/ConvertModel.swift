@@ -54,6 +54,13 @@ final class ConvertModel: ObservableObject {
         chooseTarget()
     }
 
+    /// ffmpeg or cwebp may have been installed (or removed) while the window was in the background:
+    /// redraw, so the ffmpeg warning and the WebP format follow.
+    func toolsMayHaveChanged() {
+        objectWillChange.send()
+        if phase == .idle { chooseTarget() }
+    }
+
     private func reset() {
         phase = .idle
         outputs = []

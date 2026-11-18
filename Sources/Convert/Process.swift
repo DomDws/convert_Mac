@@ -11,17 +11,21 @@ struct StoppedError: LocalizedError {
     var errorDescription: String? { "Stopped" }
 }
 
+/// The command-line tools Convert uses when they're installed. They're looked up on every use,
+/// so installing ffmpeg or cwebp while Convert is open takes effect without a restart.
 enum Tools {
-    static func find(_ name: String) -> String? {
-        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+    static let directories = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+
+    static func find(_ name: String, in directories: [String] = Tools.directories) -> String? {
+        for dir in directories {
             let path = "\(dir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: path) { return path }
         }
         return nil
     }
-    static let ffmpeg = find("ffmpeg")
-    static let ffprobe = find("ffprobe")
-    static let cwebp = find("cwebp")
+    static var ffmpeg: String? { find("ffmpeg") }
+    static var ffprobe: String? { find("ffprobe") }
+    static var cwebp: String? { find("cwebp") }
 }
 
 func lastLine(_ data: Data) -> String? {
@@ -43,11 +47,18 @@ func runSync(_ exe: String, _ args: [String]) throws -> String {
     p.standardError = err
     p.standardInput = FileHandle.nullDevice
     try p.run()
+    // Both pipes are read at the same time. Read one after the other, a tool that fills the
+    // second pipe's buffer while we wait on the first would block for good.
+    let errBox = DataBox()
+    let errRead = DispatchGroup()
+    DispatchQueue.global().async(group: errRead) {
+        errBox.append(err.fileHandleForReading.readDataToEndOfFile())
+    }
     let data = out.fileHandleForReading.readDataToEndOfFile()
-    let errData = err.fileHandleForReading.readDataToEndOfFile()
+    errRead.wait()
     p.waitUntilExit()
     guard p.terminationStatus == 0 else {
-        throw ConvertError(lastLine(errData) ?? "\(URL(fileURLWithPath: exe).lastPathComponent) failed")
+        throw ConvertError(lastLine(errBox.value) ?? "\(URL(fileURLWithPath: exe).lastPathComponent) failed")
     }
     return String(decoding: data, as: UTF8.self)
 }
@@ -113,12 +124,16 @@ func uniqueFolder(for input: URL, suffix: String, fallback: URL = OutputFolder.f
     return url
 }
 
+/// Collects a tool's error output. Only the end is kept (the last line is the message we show),
+/// so a tool that logs without end can't use up memory.
 private final class DataBox: @unchecked Sendable {
+    private static let kept = 64 * 1024
     private var data = Data()
     private let lock = NSLock()
     func append(_ d: Data) {
         lock.lock()
         data.append(d)
+        if data.count > 2 * Self.kept { data = Data(data.suffix(Self.kept)) }
         lock.unlock()
     }
     var value: Data {
@@ -126,6 +141,51 @@ private final class DataBox: @unchecked Sendable {
         defer { lock.unlock() }
         return data
     }
+}
+
+/// Turns ffmpeg's `-progress` output into fractions done (0…1). The output arrives in chunks of
+/// any size, so a line can be cut in two; the unfinished end is kept until the rest of it arrives.
+struct ProgressParser {
+    let duration: Double
+    private var pending = Data()
+
+    init(duration: Double) { self.duration = duration }
+
+    mutating func feed(_ chunk: Data) -> [Double] {
+        pending.append(chunk)
+        var fractions: [Double] = []
+        while let newline = pending.firstIndex(of: 0x0A) {
+            let line = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self)
+            pending = Data(pending[pending.index(after: newline)...])
+            guard duration > 0, line.hasPrefix("out_time_us="),
+                let us = Double(line.dropFirst("out_time_us=".count).trimmingCharacters(in: .whitespaces)), us >= 0
+            else { continue }
+            fractions.append(min(1, us / 1_000_000 / duration))
+        }
+        return fractions
+    }
+}
+
+private final class ProgressBox: @unchecked Sendable {
+    private var parser: ProgressParser
+    private let lock = NSLock()
+    init(duration: Double) { parser = ProgressParser(duration: duration) }
+    func feed(_ chunk: Data) -> [Double] { lock.withLock { parser.feed(chunk) } }
+}
+
+/// Whatever is still waiting in a pipe, without waiting for more. Used once the tool has exited,
+/// for output it wrote just before that.
+private func remainingData(in handle: FileHandle) -> Data {
+    let fd = handle.fileDescriptor
+    _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+    while true {
+        let n = read(fd, &buffer, buffer.count)
+        if n <= 0 { break }
+        data.append(buffer, count: n)
+    }
+    return data
 }
 
 /// One batch of conversions: runs ffmpeg-style processes with live progress, and carries Stop.
@@ -165,19 +225,16 @@ final class Runner: @unchecked Sendable {
             p.standardError = err
             p.standardInput = FileHandle.nullDevice
             let errBox = DataBox()
+            let parser = ProgressBox(duration: duration)
             err.fileHandleForReading.readabilityHandler = { errBox.append($0.availableData) }
             out.fileHandleForReading.readabilityHandler = { h in
-                guard duration > 0 else { return }
-                let text = String(decoding: h.availableData, as: UTF8.self)
-                for line in text.split(separator: "\n") where line.hasPrefix("out_time_us=") {
-                    if let us = Double(line.dropFirst("out_time_us=".count)), us >= 0 {
-                        progress(min(1, us / 1_000_000 / duration))
-                    }
-                }
+                for fraction in parser.feed(h.availableData) { progress(fraction) }
             }
             p.terminationHandler = { [weak self] proc in
                 out.fileHandleForReading.readabilityHandler = nil
                 err.fileHandleForReading.readabilityHandler = nil
+                // The reason for a failure is often the last thing a tool writes before it exits.
+                errBox.append(remainingData(in: err.fileHandleForReading))
                 self?.lock.lock()
                 self?.current = nil
                 self?.lock.unlock()

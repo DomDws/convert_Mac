@@ -59,7 +59,7 @@ You can also open the app on its own and drag files onto the window.
 
 ### 1. Install ffmpeg (needed for audio and video)
 
-Convert uses [ffmpeg](https://ffmpeg.org) for audio and video and `cwebp` for WebP images. Images (other than WebP), documents and PDFs work without them. The easiest way to install both is [Homebrew](https://brew.sh):
+Convert uses [ffmpeg](https://ffmpeg.org) for audio and video and `cwebp` for WebP images. Images (other than WebP), documents and PDFs work without them, and you can install them later: Convert notices without a restart. The easiest way to install both is [Homebrew](https://brew.sh):
 
 ```bash
 brew install ffmpeg webp
@@ -123,7 +123,7 @@ It's a small SwiftUI app (~1,800 lines) with no dependencies beyond what's on yo
 
 | Kind | Engine |
 |---|---|
-| Audio & video | `ffmpeg`, using Apple's hardware encoders (VideoToolbox) for H.264, HEVC and ProRes |
+| Audio & video | `ffmpeg`, using Apple's hardware encoders (VideoToolbox) for H.264, HEVC and ProRes, and the software encoders on Macs that lack one |
 | Images | Apple's ImageIO (plus `cwebp` for WebP) |
 | Documents | macOS's built-in `textutil`, a small built-in Markdown renderer, and AppKit's text system for PDF output |
 | PDF | Core Graphics and PDFKit |
@@ -163,7 +163,7 @@ scripts/check.sh smoke           # rebuild the release app, then run the convers
 scripts/check.sh site            # syntax-check site/api/*.mjs (needs node)
 ```
 
-The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text, a PDF, and two `.ts` files: TypeScript source and an MPEG transport stream) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off.
+The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text, a PDF, and two `.ts` files: TypeScript source and an MPEG transport stream) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off; on a machine without a hardware encoder, the normal run checks that the app falls back to the software one.
 
 You need Xcode 26.6 or its Command Line Tools: CI uses that version, and its `swift-format` (6.3) decides the formatting. With only the Command Line Tools, `build` and `smoke` use a native release build, since the universal app needs Xcode; CI builds and tests the universal app.
 

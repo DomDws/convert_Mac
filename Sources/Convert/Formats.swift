@@ -107,12 +107,14 @@ struct Target: Identifiable, Hashable {
 }
 
 enum Targets {
-    static let all: [Target] = {
+    /// Every format, in menu order. WebP is only offered while cwebp is installed; that's checked
+    /// on each use, so it shows up as soon as cwebp does.
+    static var all: [Target] { Tools.cwebp == nil ? catalogue.filter { $0.id != "webp" } : catalogue }
+
+    private static let catalogue: [Target] = {
         func t(_ g: OutGroup, _ list: [(String, String, String)]) -> [Target] {
             list.map { Target(id: $0.0, label: $0.1, ext: $0.2, group: g) }
         }
-        var webp: [(String, String, String)] = []
-        if Tools.cwebp != nil { webp = [("webp", "WebP", "webp")] }
         return t(
             .video,
             [
@@ -148,7 +150,7 @@ enum Targets {
                     ("png", "PNG", "png"),
                     ("heic", "HEIC", "heic"),
                     ("avif", "AVIF", "avif"),
-                ] + webp + [
+                    ("webp", "WebP", "webp"),
                     ("tiff", "TIFF", "tiff"),
                     ("gif-img", "GIF", "gif"),
                     ("bmp", "BMP", "bmp"),

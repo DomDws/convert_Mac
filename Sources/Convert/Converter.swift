@@ -18,13 +18,15 @@ enum Converter {
             if p.ok, t.group == .audio, !p.hasAudio { throw ConvertError("This file has no audio track") }
             if p.ok, t.group == .video, !p.hasVideo { throw ConvertError("This file has no video track") }
             let out = try uniqueOutput(for: input, ext: t.ext)
-            let codec = t.group == .audio ? FF.audioArgs(t, s, p) : FF.videoArgs(t, s, p)
-            let args = FF.common + ["-i", input.path] + codec + [out.path]
-            do {
-                try await runner.run(ff, args, duration: p.duration, progress: progress)
-            } catch {
-                try? FileManager.default.removeItem(at: out)
-                throw error
+            try await withSoftwareFallback(t, s, runner: runner) { s in
+                let codec = t.group == .audio ? FF.audioArgs(t, s, p) : FF.videoArgs(t, s, p)
+                let args = FF.common + ["-i", input.path] + codec + [out.path]
+                do {
+                    try await runner.run(ff, args, duration: p.duration, progress: progress)
+                } catch {
+                    try? FileManager.default.removeItem(at: out)
+                    throw error
+                }
             }
             return [out]
 
@@ -50,6 +52,23 @@ enum Converter {
             return try await Task.detached {
                 try PDFConv.convert(input, t, s, runner: runner, progress: progress)
             }.value
+        }
+    }
+
+    /// Formats with a hardware encoder use it by default, but not every Mac has every one (ProRes,
+    /// HEVC on older Intel Macs, virtual machines), and ffmpeg then fails. Rather than fail the
+    /// conversion, it's tried once more with the software encoder: slower, but it works anywhere.
+    static func withSoftwareFallback(
+        _ t: Target, _ s: ConvSettings, runner: Runner,
+        _ encode: (ConvSettings) async throws -> Void
+    ) async throws {
+        do {
+            try await encode(s)
+        } catch {
+            guard t.hasHardwareOption, s.hardware, !runner.isCancelled else { throw error }
+            var software = s
+            software.hardware = false
+            try await encode(software)
         }
     }
 }

@@ -50,6 +50,9 @@ struct ContentView: View {
         .frame(width: 460)
         .tint(Brand.sky)
         .background(dropTargeted ? Brand.sky.opacity(0.08) : .clear)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.toolsMayHaveChanged()
+        }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
