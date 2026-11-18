@@ -6,32 +6,12 @@ import UniformTypeIdentifiers
 enum MediaKind: String, CaseIterable {
     case audio, video, image, pdf, document
 
-    private static let videoExts: Set<String> = [
-        "mkv", "webm", "avi", "flv", "wmv", "ts", "mts", "m2ts", "3gp", "ogv", "mxf", "vob",
-    ]
-    private static let audioExts: Set<String> = [
-        "mka", "opus", "ape", "wv", "tta", "dsf", "dff", "ac3", "dts", "amr", "mp2", "caf",
-    ]
-
-    private static let documentTypes: [UTType] =
-        [.rtf, .rtfd, .plainText, .html, .webArchive]
-        + [
-            "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
-            "org.oasis-open.opendocument.text", "net.daringfireball.markdown",
-        ].compactMap { UTType($0) }
-
+    /// The kind of file this is, going by its name. See `FileTypes` for the list this reads.
     static func of(_ url: URL) -> MediaKind? {
         let ext = url.pathExtension.lowercased()
-        if videoExts.contains(ext) { return .video }
-        if audioExts.contains(ext) { return .audio }
-        if ext == "md" || ext == "markdown" { return .document }
-        guard let t = UTType(filenameExtension: ext) else { return nil }
-        if t.conforms(to: .pdf) { return .pdf }
-        if t.conforms(to: .image) { return .image }
-        if t.conforms(to: .audio) { return .audio }
-        if t.conforms(to: .audiovisualContent) { return .video }
-        if documentTypes.contains(where: { t.conforms(to: $0) }) { return .document }
-        return nil
+        if let extra = FileTypes.extraExtensions.first(where: { $0.exts.contains(ext) }) { return extra.kind }
+        guard let type = UTType(filenameExtension: ext) else { return nil }
+        return FileTypes.contentTypes.first { $0.types.contains { type.conforms(to: $0) } }?.kind
     }
 
     var outputGroups: Set<OutGroup> {
@@ -62,6 +42,44 @@ enum MediaKind: String, CaseIterable {
         case .pdf: "PDF"
         case .document: "Document"
         }
+    }
+}
+
+// MARK: - Accepted file types
+
+/// The one list of what Convert accepts. File-kind detection reads it, the Finder Quick Action
+/// sends exactly these types, and a test checks that Resources/Info.plist declares the same ones.
+enum FileTypes {
+    /// Content type identifiers by kind, in the order detection tries them
+    /// (PDF and images before the broader audio/video types, documents last).
+    static let accepted: [(kind: MediaKind, identifiers: [String])] = [
+        (.pdf, ["com.adobe.pdf"]),
+        (.image, ["public.image"]),
+        (.audio, ["public.audio"]),
+        (.video, ["public.movie", "public.audiovisual-content"]),
+        (
+            .document,
+            [
+                "public.plain-text", "public.rtf", "com.apple.rtfd", "public.html", "com.apple.webarchive",
+                "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
+                "org.oasis-open.opendocument.text", "net.daringfireball.markdown",
+            ]
+        ),
+    ]
+
+    /// Extensions macOS has no content type for (or files it under a different one), by kind.
+    static let extraExtensions: [(kind: MediaKind, exts: Set<String>)] = [
+        (.video, ["mkv", "webm", "avi", "flv", "wmv", "ts", "mts", "m2ts", "3gp", "ogv", "mxf", "vob"]),
+        (.audio, ["mka", "opus", "ape", "wv", "tta", "dsf", "dff", "ac3", "dts", "amr", "mp2", "caf"]),
+        (.document, ["md", "markdown"]),
+    ]
+
+    /// Every accepted content type identifier: what the Quick Action and the app bundle declare.
+    static var identifiers: [String] { accepted.flatMap(\.identifiers) }
+
+    /// `accepted` as content types; an identifier this Mac doesn't know is left out.
+    static let contentTypes: [(kind: MediaKind, types: [UTType])] = accepted.map { entry in
+        (entry.kind, entry.identifiers.compactMap { UTType($0) })
     }
 }
 

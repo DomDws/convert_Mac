@@ -45,12 +45,6 @@ final class ConvertModel: ObservableObject {
         chooseTarget()
     }
 
-    func remove(_ url: URL) {
-        guard phase == .idle else { return }
-        files.removeAll { $0 == url }
-        chooseTarget()
-    }
-
     private func reset() {
         phase = .idle
         outputs = []

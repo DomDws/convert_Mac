@@ -14,13 +14,6 @@ enum QuickAction {
         FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/document.wflow").path)
     }
 
-    static let fileTypes = [
-        "public.audio", "public.movie", "public.audiovisual-content", "public.image", "com.adobe.pdf",
-        "public.plain-text", "public.rtf", "com.apple.rtfd", "public.html", "com.apple.webarchive",
-        "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
-        "org.oasis-open.opendocument.text", "net.daringfireball.markdown",
-    ]
-
     static func install() throws {
         let contents = url.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
@@ -32,7 +25,7 @@ enum QuickAction {
                     "NSMenuItem": ["default": "Convert…"],
                     "NSMessage": "runWorkflowAsService",
                     "NSRequiredContext": ["NSApplicationIdentifier": "com.apple.finder"],
-                    "NSSendFileTypes": fileTypes,
+                    "NSSendFileTypes": FileTypes.identifiers,
                     "NSIconName": "NSActionTemplate",
                 ]
             ],
