@@ -262,6 +262,29 @@ for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt scri
   done
 done
 
+# --- Document → PDF --------------------------------------------------------------------
+# The paper size setting is respected, and nothing is logged along the way (a file given by
+# a relative path used to produce CFURL warnings).
+
+paper_check() {  # paper_check <label> <settings JSON> <expected MediaBox width and height>
+  local label="$1" settings="$2" box="$3" dir="$RUNS/paper-$1" log
+  mkdir -p "$dir" && cp "$SAMPLES/sample.md" "$dir/"
+  log="$dir/output.log"
+  (cd "$dir" && CONVERT_SETTINGS="$settings" perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" "$BIN" --cli pdf-doc sample.md) >"$log" 2>&1
+  local status=$?
+  if [[ $status -ne 0 ]] || grep -q '^FAIL' "$log"; then
+    fail "$label" "sample.md" "$(grep -m1 '^FAIL' "$log" || tail -n1 "$log") (exit $status)"
+  elif ! grep -a -q "/MediaBox \[0 0 $box\]" "$dir/sample.pdf"; then
+    fail "$label" "sample.md" "wrong paper size: $(grep -a -o -m1 '/MediaBox \[[^]]*\]' "$dir/sample.pdf")"
+  elif grep -q -v '^OK ' "$log"; then
+    fail "$label" "sample.md" "unexpected output: $(grep -v -m1 '^OK ' "$log")"
+  else
+    pass "$label" "sample.md" "MediaBox [0 0 $box], nothing logged"
+  fi
+}
+paper_check "pdf-doc:a4" '{"paperA4": true}' "595.2756 841.8898"
+paper_check "pdf-doc:letter" '{"paperA4": false}' "612 792"
+
 # --- Read-only source folder ----------------------------------------------------------
 # When the original's folder can't be written to, the output goes to a fallback folder
 # (Downloads; CONVERT_FALLBACK_DIR points it at a folder of ours) and the app says so.

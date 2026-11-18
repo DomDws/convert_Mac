@@ -119,20 +119,22 @@ Convert has no network code, no analytics and no accounts. It reads the files yo
 
 ## How it works (for the curious)
 
-It's a small SwiftUI app (~1,800 lines) with no dependencies beyond what's on your Mac:
+It's a small SwiftUI app (~2,500 lines) with no dependencies beyond what's on your Mac:
 
 | Kind | Engine |
 |---|---|
 | Audio & video | `ffmpeg`, using Apple's hardware encoders (VideoToolbox) for H.264, HEVC and ProRes, and the software encoders on Macs that lack one |
 | Images | Apple's ImageIO (plus `cwebp` for WebP) |
-| Documents | macOS's built-in `textutil`, a small built-in Markdown renderer, and AppKit's text system for PDF output |
+| Documents | macOS's built-in `textutil`, a small built-in Markdown renderer, and AppKit's text system for PDF output (in a helper process, so a long document doesn't freeze the window) |
 | PDF | Core Graphics and PDFKit |
 
 The Finder menu item is a tiny Automator Quick Action (`~/Library/Services/Convert.workflow`) that runs `open -b local.convert.app <files>`.
 
 | File | What's in it |
 |---|---|
-| `Sources/Convert/Formats.swift` | File type detection, output formats, per-format options |
+| `Sources/Convert/Formats.swift` | The list of accepted file types, file type detection, output formats, per-format options |
+| `Sources/Convert/Sniff.swift` | Looks inside a file when its name can't be trusted (`.ts`, misnamed files) |
+| `Sources/Convert/Converter.swift`, `Process.swift` | Runs one conversion; external tools, Stop, where output goes |
 | `Sources/Convert/FFmpeg.swift` | ffmpeg arguments for each audio/video format |
 | `Sources/Convert/ImageConv.swift` | Image conversion |
 | `Sources/Convert/DocConv.swift` | Document conversion, document → PDF, PDF → images/text |

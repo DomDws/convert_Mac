@@ -36,14 +36,7 @@ enum Converter {
         case .document:
             if t.id == "pdf-doc" {
                 let out = try uniqueOutput(for: input, ext: "pdf")
-                do {
-                    try runner.checkCancelled()
-                    try await MainActor.run { try DocConv.toPDF(input, out, a4: s.paperA4) }
-                    try runner.checkCancelled()
-                } catch {
-                    try? FileManager.default.removeItem(at: out)
-                    throw error
-                }
+                try await DocConv.toPDF(input, out, a4: s.paperA4, runner: runner)
                 return [out]
             }
             return [try await Task.detached { try DocConv.textutil(input, t, runner: runner) }.value]

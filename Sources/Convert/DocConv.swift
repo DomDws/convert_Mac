@@ -52,9 +52,39 @@ enum DocConv {
         return out
     }
 
+    /// The app's own executable, set at launch. Nil in unit tests, which have no app to start.
+    static var worker: URL?
+
+    /// Document → PDF without holding up the window.
+    ///
+    /// Laying text out on paper needs AppKit's text system, which only works on the main thread,
+    /// where a big document would freeze the window for seconds. So the app starts a second copy
+    /// of itself to do it (`Convert --pdf-worker`, see main.swift): the window stays responsive,
+    /// and Stop simply ends that process. A stopped or failed conversion leaves no partial PDF.
+    static func toPDF(
+        _ input: URL, _ out: URL, a4: Bool, runner: Runner, worker: URL? = DocConv.worker
+    ) async throws {
+        do {
+            try runner.checkCancelled()
+            if let worker {
+                let args = ["--pdf-worker", input.path, out.path, a4 ? "a4" : "letter"]
+                try await runner.run(worker.path, args, duration: 0) { _ in }
+            } else {
+                try await MainActor.run { try layOutPDF(input, out, a4: a4) }
+            }
+            try runner.checkCancelled()
+            guard FileManager.default.fileExists(atPath: out.path) else {
+                throw ConvertError("Couldn't create the PDF")
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: out)
+            throw error
+        }
+    }
+
     /// Lays the document out on paper and prints it to PDF. Must run on the main thread (AppKit text system).
     @MainActor
-    static func toPDF(_ original: URL, _ out: URL, a4: Bool) throws {
+    static func layOutPDF(_ original: URL, _ out: URL, a4: Bool) throws {
         let src = try source(for: original)
         defer { src.cleanup() }
         let input = src.url
@@ -86,7 +116,8 @@ enum DocConv {
         info.verticalPagination = .automatic
         info.isVerticallyCentered = false
         info.jobDisposition = .save
-        info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = out
+        // Absolute: a URL relative to the current folder makes the print system log CFURL warnings.
+        info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = out.absoluteURL
 
         let width = info.paperSize.width - info.leftMargin - info.rightMargin
         let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 100))

@@ -17,17 +17,14 @@ final class ToolsTests {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    /// A stand-in for a chatty tool: writes about 1 MB to stderr (far more than a pipe holds),
+    /// A stand-in for a chatty tool: writes 1 MB to stderr (far more than a pipe holds),
     /// then one last line, and exits with `status`.
     private func chatty(lastLine: String, status: Int) -> [String] {
         [
             "-c",
             """
-            i=0
-            while [ $i -lt 16000 ]; do
-              echo "warning: sixty-four bytes of noise on the error output, line $i." >&2
-              i=$((i + 1))
-            done
+            head -c 1048576 /dev/zero | tr '\\0' 'x' >&2
+            echo >&2
             echo "to stdout"
             echo "\(lastLine)" >&2
             exit \(status)

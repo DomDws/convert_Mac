@@ -30,7 +30,7 @@ func runCLI(_ args: [String]) {
     Task {
         var failed = false
         for path in args.dropFirst() {
-            let url = URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path).absoluteURL
             let start = Date()
             do {
                 let outs = try await Converter.convert(url, to: target, settings: settings, runner: Runner()) { _ in }
@@ -47,6 +47,26 @@ func runCLI(_ args: [String]) {
             }
         }
         exit(failed ? 1 : 0)
+    }
+}
+
+/// Internal: `Convert --pdf-worker <input> <output> <a4|letter>` lays one document out as a PDF.
+/// The app runs this in a second process so its window stays responsive (see `DocConv.toPDF`).
+/// On failure the reason is the last line on stderr.
+@MainActor
+func runPDFWorker(_ args: [String]) {
+    guard args.count == 3, ["a4", "letter"].contains(args[2]) else {
+        FileHandle.standardError.write(Data("usage: Convert --pdf-worker <input> <output> <a4|letter>\n".utf8))
+        exit(2)
+    }
+    Task {
+        do {
+            try DocConv.layOutPDF(URL(fileURLWithPath: args[0]), URL(fileURLWithPath: args[1]), a4: args[2] == "a4")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
     }
 }
 
@@ -83,6 +103,7 @@ func settingsWithOverrides(_ json: String) throws -> ConvSettings {
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let args = Array(CommandLine.arguments.dropFirst())
+    DocConv.worker = Bundle.main.executableURL
     if args.first == "--install-quick-action" || args.first == "--uninstall-quick-action" {
         do {
             if args.first == "--install-quick-action" { try QuickAction.install() } else { try QuickAction.uninstall() }
@@ -92,6 +113,10 @@ MainActor.assumeIsolated {
             print("Failed: \(error.localizedDescription)")
             exit(1)
         }
+    } else if args.first == "--pdf-worker" {
+        app.setActivationPolicy(.prohibited)
+        runPDFWorker(Array(args.dropFirst()))
+        app.run()
     } else if args.first == "--cli" {
         app.setActivationPolicy(.prohibited)
         runCLI(Array(args.dropFirst()))

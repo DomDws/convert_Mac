@@ -213,7 +213,11 @@ struct ContentView: View {
             }
         case .running:
             VStack(alignment: .leading, spacing: 8) {
-                ProgressView(value: model.progress)
+                if model.indeterminate {
+                    ProgressView().progressViewStyle(.linear)
+                } else {
+                    ProgressView(value: model.progress)
+                }
                 HStack {
                     Text("Converting \(model.currentName)…")
                         .font(.caption).foregroundStyle(.secondary)

@@ -11,6 +11,8 @@ final class ConvertModel: ObservableObject {
     @Published var settings = ConvSettings() { didSet { if !loading { saveSettings() } } }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var progress = 0.0
+    /// True while the running conversion can't say how far along it is (one document → PDF).
+    @Published private(set) var indeterminate = false
     @Published private(set) var currentName = ""
     @Published private(set) var outputs: [URL] = []
     @Published private(set) var errors: [String] = []
@@ -112,6 +114,9 @@ final class ConvertModel: ObservableObject {
         reset()
         runner.reset()
         phase = .running
+        // Document → PDF happens in a helper process that reports no progress; with several files the
+        // bar still moves once per file.
+        indeterminate = t.id == "pdf-doc" && files.count == 1
         let list = files
         let s = settings
         let runner = runner
@@ -147,6 +152,7 @@ final class ConvertModel: ObservableObject {
                 }
             }
             progress = 1
+            indeterminate = false
             phase = .done
         }
     }
