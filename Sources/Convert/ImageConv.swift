@@ -18,32 +18,48 @@ enum ImageConv {
         }
     }
 
-    static func convert(_ input: URL, _ t: Target, _ s: ConvSettings) throws -> URL {
+    static func convert(_ input: URL, _ t: Target, _ s: ConvSettings, runner: Runner) throws -> URL {
         guard let src = CGImageSourceCreateWithURL(input as CFURL, nil), CGImageSourceGetCount(src) > 0 else {
             throw ConvertError("Couldn't read this image")
         }
         let opaque = ["jpg", "bmp"].contains(t.id)
         let image = try render(src, maxSize: s.maxSize, flatten: opaque)
-        let out = uniqueOutput(for: input, ext: t.ext)
-
-        if t.id == "webp" {
-            try writeWebP(image, to: out, quality: s.imageQuality)
-            return out
-        }
-        var props: [CFString: Any] = [:]
-        if t.isLossyImage { props[kCGImageDestinationLossyCompressionQuality] = s.imageQuality }
-        if t.id != "pdf-img", let meta = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
-            for key in [kCGImagePropertyExifDictionary, kCGImagePropertyIPTCDictionary, kCGImagePropertyGPSDictionary] {
-                if let v = meta[key] { props[key] = v }
+        try runner.checkCancelled()
+        let out = try uniqueOutput(for: input, ext: t.ext)
+        do {
+            if t.id == "webp" {
+                try writeWebP(image, to: out, quality: s.imageQuality)
+            } else {
+                var props: [CFString: Any] = [:]
+                if t.isLossyImage { props[kCGImageDestinationLossyCompressionQuality] = s.imageQuality }
+                if t.id != "pdf-img", let meta = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
+                    for key in [
+                        kCGImagePropertyExifDictionary, kCGImagePropertyIPTCDictionary, kCGImagePropertyGPSDictionary,
+                    ] {
+                        if let v = meta[key] { props[key] = v }
+                    }
+                }
+                try write(image, to: out, type: utType(t.id), label: t.label, props: props)
             }
+            try runner.checkCancelled()
+        } catch {
+            // Stopped or failed: no half-written or unwanted file stays behind.
+            try? FileManager.default.removeItem(at: out)
+            throw error
         }
-        try write(image, to: out, type: utType(t.id), label: t.label, props: props)
         return out
     }
 
     static func write(_ image: CGImage, to out: URL, type: UTType?, label: String, props: [CFString: Any]) throws {
-        guard let type, let dest = CGImageDestinationCreateWithURL(out as CFURL, type.identifier as CFString, 1, nil) else {
-            throw ConvertError("This Mac can't write \(label)")
+        guard let type else { throw ConvertError("This Mac can't write \(label)") }
+        guard let dest = CGImageDestinationCreateWithURL(out as CFURL, type.identifier as CFString, 1, nil) else {
+            // A format this Mac can write, but the file can't be created: that's the folder, not the format.
+            let writable = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
+            throw ConvertError(
+                writable.contains(type.identifier)
+                    ? "Couldn't save to “\(OutputFolder.name(of: out.deletingLastPathComponent()))”: "
+                        + "that folder can't be written to"
+                    : "This Mac can't write \(label)")
         }
         CGImageDestinationAddImage(dest, image, props as CFDictionary)
         guard CGImageDestinationFinalize(dest) else {
@@ -80,8 +96,10 @@ enum ImageConv {
 
     static func flattenOnWhite(_ img: CGImage) throws -> CGImage {
         let space = img.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
-        guard let ctx = CGContext(data: nil, width: img.width, height: img.height, bitsPerComponent: 8,
-                                  bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        guard
+            let ctx = CGContext(
+                data: nil, width: img.width, height: img.height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
         else { throw ConvertError("Couldn't flatten transparency") }
         let rect = CGRect(x: 0, y: 0, width: img.width, height: img.height)
         ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))

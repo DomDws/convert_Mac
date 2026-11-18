@@ -11,11 +11,15 @@ final class ConvertModel: ObservableObject {
     @Published var settings = ConvSettings() { didSet { if !loading { saveSettings() } } }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var progress = 0.0
+    /// True while the running conversion can't say how far along it is (one document → PDF, one font).
+    @Published private(set) var indeterminate = false
     @Published private(set) var currentName = ""
     @Published private(set) var outputs: [URL] = []
     @Published private(set) var errors: [String] = []
     @Published private(set) var stopped = false
     @Published private(set) var trashed = 0
+    /// Set when outputs couldn't go next to their originals (read-only folder) and were saved here instead.
+    @Published private(set) var savedElsewhere: URL?
     /// Move each original to the Trash once its conversion succeeded (remembered).
     @Published var trashOriginals = UserDefaults.standard.bool(forKey: "trashOriginals") {
         didSet { UserDefaults.standard.set(trashOriginals, forKey: "trashOriginals") }
@@ -30,7 +34,9 @@ final class ConvertModel: ObservableObject {
         loadSettings()
     }
 
-    var kinds: Set<MediaKind> { Set(files.compactMap(MediaKind.of)) }
+    /// What each file is, decided once when it's added (telling can mean opening the file).
+    private var kindOf: [URL: MediaKind] = [:]
+    var kinds: Set<MediaKind> { Set(files.compactMap { kindOf[$0] }) }
     var groups: [(OutGroup, [Target])] { Targets.groups(for: kinds) }
     var target: Target? { Targets.byID(targetID) }
     var primaryKind: MediaKind? { kinds.count == 1 ? kinds.first : nil }
@@ -40,28 +46,44 @@ final class ConvertModel: ObservableObject {
         guard phase != .running else { return }
         if phase == .done { reset() }
         for u in urls where !files.contains(u) {
-            if MediaKind.of(u) != nil { files.append(u) } else { skipped += 1 }
+            if let kind = MediaKind.of(u) {
+                kindOf[u] = kind
+                files.append(u)
+            } else {
+                skipped += 1
+            }
         }
         chooseTarget()
     }
 
-    func remove(_ url: URL) {
-        guard phase == .idle else { return }
-        files.removeAll { $0 == url }
-        chooseTarget()
+    /// ffmpeg or cwebp may have been installed (or removed) while the window was in the background:
+    /// redraw, so the ffmpeg warning and the WebP format follow.
+    func toolsMayHaveChanged() {
+        objectWillChange.send()
+        if phase == .idle { chooseTarget() }
     }
 
     private func reset() {
-        phase = .idle; outputs = []; errors = []; progress = 0; stopped = false; trashed = 0
+        phase = .idle
+        outputs = []
+        errors = []
+        progress = 0
+        stopped = false
+        trashed = 0
+        savedElsewhere = nil
     }
 
     private func chooseTarget() {
         let available = groups.flatMap(\.1)
-        guard !available.isEmpty else { targetID = ""; return }
+        guard !available.isEmpty else {
+            targetID = ""
+            return
+        }
         if available.contains(where: { $0.id == targetID }) { return }
         let last = UserDefaults.standard.string(forKey: "lastTarget.\(groupKey)")
         let exts = Set(files.map { $0.pathExtension.lowercased() })
-        targetID = available.first(where: { $0.id == last })?.id
+        targetID =
+            available.first(where: { $0.id == last })?.id
             ?? Targets.preferred(for: kinds, sourceExts: exts, among: available)?.id
             ?? available[0].id
     }
@@ -71,7 +93,10 @@ final class ConvertModel: ObservableObject {
         UserDefaults.standard.set(t.id, forKey: "lastTarget.\(groupKey)")
         var s = ConvSettings()
         if let data = UserDefaults.standard.data(forKey: "settings.\(t.id)"),
-           let saved = try? JSONDecoder().decode(ConvSettings.self, from: data) { s = saved }
+            let saved = try? JSONDecoder().decode(ConvSettings.self, from: data)
+        {
+            s = saved
+        }
         if !t.bitrateOptions.isEmpty, !t.bitrateOptions.contains(s.audioBitrate) { s.audioBitrate = t.defaultBitrate }
         if !t.sampleRates.contains(s.sampleRate) { s.sampleRate = 0 }
         loading = true
@@ -87,8 +112,15 @@ final class ConvertModel: ObservableObject {
     func start() {
         guard let t = target, phase == .idle, !files.isEmpty else { return }
         reset()
+        runner.reset()
         phase = .running
-        let list = files, s = settings, runner = runner, trash = trashOriginals
+        // Document → PDF happens in a helper process that reports no progress, and neither does
+        // compressing a font; with several files the bar still moves once per file.
+        indeterminate = (t.id == "pdf-doc" || t.group == .font) && files.count == 1
+        let list = files
+        let s = settings
+        let runner = runner
+        let trash = trashOriginals
         Task {
             let n = Double(list.count)
             for (i, file) in list.enumerated() {
@@ -104,9 +136,10 @@ final class ConvertModel: ObservableObject {
                 do {
                     let made = try await Converter.convert(file, to: t, settings: s, runner: runner, progress: report)
                     outputs += made
-                    // Only after a finished, separate output exists on disk; the Trash keeps it recoverable.
-                    if trash, !stopped, !made.isEmpty, !made.contains(file),
-                       made.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
+                    if let moved = made.first(where: { OutputFolder.isFallback($0, for: file) }) {
+                        savedElsewhere = moved.deletingLastPathComponent()
+                    }
+                    if trash, Self.mayTrash(file, outputs: made, stopped: stopped) {
                         do {
                             try FileManager.default.trashItem(at: file, resultingItemURL: nil)
                             trashed += 1
@@ -119,8 +152,18 @@ final class ConvertModel: ObservableObject {
                 }
             }
             progress = 1
+            indeterminate = false
             phase = .done
         }
+    }
+
+    /// Whether an original may go to the Trash (which keeps it recoverable): only once its finished,
+    /// separate output sits next to it. Never after Stop, and never when the output had to be saved
+    /// somewhere else, so the original and its conversion don't end up in different places.
+    nonisolated static func mayTrash(_ original: URL, outputs: [URL], stopped: Bool) -> Bool {
+        !stopped && !outputs.isEmpty && !outputs.contains(original)
+            && outputs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+            && !outputs.contains { OutputFolder.isFallback($0, for: original) }
     }
 
     func cancel() {

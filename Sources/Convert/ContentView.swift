@@ -26,10 +26,12 @@ struct ContentView: View {
             if model.files.isEmpty {
                 dropZone
             } else if model.groups.isEmpty {
-                Label("These files can't be converted together. Pick files of one kind (audio, video, images, documents or PDFs).",
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label(
+                    "These files can't be converted together. Pick files of one kind (audio, video, images, documents, PDFs or fonts).",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             } else if let target = model.target {
                 FormRow("Convert to") { formatPicker }
                 if target.hasSettings {
@@ -48,6 +50,9 @@ struct ContentView: View {
         .frame(width: 460)
         .tint(Brand.sky)
         .background(dropTargeted ? Brand.sky.opacity(0.08) : .clear)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.toolsMayHaveChanged()
+        }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
@@ -95,7 +100,7 @@ struct ContentView: View {
         var parts: [String] = []
         if model.files.count == 1 {
             let f = model.files[0]
-            if let k = MediaKind.of(f) { parts.append(k.noun) }
+            if let k = model.primaryKind { parts.append(k.noun) }
             if let size = try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
             }
@@ -111,13 +116,14 @@ struct ContentView: View {
         VStack(spacing: 12) {
             VStack(spacing: 10) {
                 Image(systemName: "tray.and.arrow.down").font(.system(size: 30)).foregroundStyle(.secondary)
-                Text("Drop audio, video, images, documents or PDFs").foregroundStyle(.secondary)
+                Text("Drop audio, video, images, documents, PDFs or fonts").foregroundStyle(.secondary)
                 Button("Choose Files…") { chooseFiles() }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
-            .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .foregroundStyle(dropTargeted ? Brand.sky : Color.secondary.opacity(0.4)))
+            .background(
+                RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                    .foregroundStyle(dropTargeted ? Brand.sky : Color.secondary.opacity(0.4)))
 
             if !quickActionInstalled {
                 HStack(spacing: 10) {
@@ -189,10 +195,14 @@ struct ContentView: View {
                     Label("Needs ffmpeg (brew install ffmpeg)", systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 } else {
-                    Toggle(model.files.count > 1 ? "Move originals to Trash" : "Move original to Trash",
-                           isOn: $model.trashOriginals)
-                        .toggleStyle(.checkbox)
-                        .help("Once a file has converted, its original goes to the Trash. You can still put it back from there.")
+                    Toggle(
+                        model.files.count > 1 ? "Move originals to Trash" : "Move original to Trash",
+                        isOn: $model.trashOriginals
+                    )
+                    .toggleStyle(.checkbox)
+                    .help(
+                        "Once a file has converted, its original goes to the Trash. You can still put it back from there."
+                    )
                 }
                 Spacer()
                 Button("Cancel") { model.onClose() }
@@ -203,7 +213,11 @@ struct ContentView: View {
             }
         case .running:
             VStack(alignment: .leading, spacing: 8) {
-                ProgressView(value: model.progress)
+                if model.indeterminate {
+                    ProgressView().progressViewStyle(.linear)
+                } else {
+                    ProgressView(value: model.progress)
+                }
                 HStack {
                     Text("Converting \(model.currentName)…")
                         .font(.caption).foregroundStyle(.secondary)
@@ -216,14 +230,27 @@ struct ContentView: View {
         case .done:
             VStack(alignment: .leading, spacing: 8) {
                 if !model.outputs.isEmpty {
-                    Label("Converted \(model.outputs.count) \(model.outputs.count == 1 ? "file" : "files")",
-                          systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                    Label(
+                        "Converted \(model.outputs.count) \(model.outputs.count == 1 ? "file" : "files")",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .foregroundStyle(.green)
+                }
+                if let folder = model.savedElsewhere {
+                    Label(
+                        "Saved to \(OutputFolder.name(of: folder)) because the original's folder is read-only"
+                            + (model.trashOriginals ? ". The original stays where it is." : ""),
+                        systemImage: "folder"
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 if model.trashed > 0 {
-                    Label("Moved \(model.trashed == 1 ? "the original" : "\(model.trashed) originals") to the Trash",
-                          systemImage: "trash")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Label(
+                        "Moved \(model.trashed == 1 ? "the original" : "\(model.trashed) originals") to the Trash",
+                        systemImage: "trash"
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
                 if model.stopped {
                     Label("Stopped", systemImage: "stop.circle").foregroundStyle(.secondary)
@@ -276,6 +303,7 @@ struct SettingsView: View {
             case .image: image
             case .document: document
             case .pdfPages: pdf
+            case .font: EmptyView()
             }
         }
     }
@@ -293,7 +321,9 @@ struct SettingsView: View {
     @ViewBuilder private var audio: some View {
         if target.isLossyAudio {
             FormRow("Bitrate") {
-                menu($s.audioBitrate, target.bitrateOptions.map { ($0, $0 == 0 ? "VBR – best (~245 kbps)" : "\($0) kbps") })
+                menu(
+                    $s.audioBitrate,
+                    target.bitrateOptions.map { ($0, $0 == 0 ? "VBR – best (~245 kbps)" : "\($0) kbps") })
             }
         }
         if target.isLosslessAudio {
@@ -324,15 +354,23 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             if target.id != "mov-prores" {
                 FormRow("Quality") {
-                    Slider(value: $s.videoQuality, in: 0...1) { EmptyView() }
-                        minimumValueLabel: { Text("Smaller").font(.caption) }
-                        maximumValueLabel: { Text("Better").font(.caption) }
-                        .frame(width: 250)
+                    Slider(value: $s.videoQuality, in: 0...1) {
+                        EmptyView()
+                    } minimumValueLabel: {
+                        Text("Smaller").font(.caption)
+                    } maximumValueLabel: {
+                        Text("Better").font(.caption)
+                    }
+                    .frame(width: 250)
                 }
             }
             FormRow("Resolution") {
-                menu($s.videoHeight, [(0, "Same as source"), (2160, "4K (2160p)"), (1440, "1440p"),
-                                      (1080, "1080p"), (720, "720p"), (480, "480p")])
+                menu(
+                    $s.videoHeight,
+                    [
+                        (0, "Same as source"), (2160, "4K (2160p)"), (1440, "1440p"),
+                        (1080, "1080p"), (720, "720p"), (480, "480p"),
+                    ])
             }
             FormRow("Frame rate") {
                 menu($s.fps, [(0, "Same as source"), (60, "60 fps"), (30, "30 fps"), (25, "25 fps"), (24, "24 fps")])
@@ -364,8 +402,12 @@ struct SettingsView: View {
     @ViewBuilder private var image: some View {
         if target.isLossyImage { qualitySlider }
         FormRow("Max size") {
-            menu($s.maxSize, [(0, "Same as source"), (4096, "4096 px"), (2048, "2048 px"), (1920, "1920 px"),
-                              (1280, "1280 px"), (1080, "1080 px"), (512, "512 px")])
+            menu(
+                $s.maxSize,
+                [
+                    (0, "Same as source"), (4096, "4096 px"), (2048, "2048 px"), (1920, "1920 px"),
+                    (1280, "1280 px"), (1080, "1080 px"), (512, "512 px"),
+                ])
         }
     }
 
@@ -387,7 +429,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var pdf: some View {
-        if target.id != "pdf-txt" {
+        if !target.isPDFText {
             FormRow("Resolution") {
                 menu($s.pdfDPI, [(72, "72 dpi (screen)"), (150, "150 dpi"), (300, "300 dpi (print)")])
             }

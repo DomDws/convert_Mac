@@ -14,41 +14,55 @@ enum QuickAction {
         FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/document.wflow").path)
     }
 
-    static let fileTypes = [
-        "public.audio", "public.movie", "public.audiovisual-content", "public.image", "com.adobe.pdf",
-        "public.plain-text", "public.rtf", "com.apple.rtfd", "public.html", "com.apple.webarchive",
-        "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
-        "org.oasis-open.opendocument.text", "net.daringfireball.markdown",
-    ]
+    /// The file types an installed Quick Action is offered for; nil when there's none to read.
+    static func installedTypes(at url: URL = QuickAction.url) -> [String]? {
+        guard let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
+            let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let services = info["NSServices"] as? [[String: Any]]
+        else { return nil }
+        return services.first?["NSSendFileTypes"] as? [String]
+    }
 
-    static func install() throws {
+    /// A Quick Action installed by an older version doesn't list the file types added since
+    /// (fonts, in 0.4), so Finder wouldn't offer "Convert…" for them. It's written again when
+    /// the app opens. One the user removed stays removed.
+    static func updateIfOutdated(at url: URL = QuickAction.url) {
+        guard let types = installedTypes(at: url), Set(types) != Set(FileTypes.identifiers) else { return }
+        try? install(at: url)
+    }
+
+    static func install(at url: URL = QuickAction.url) throws {
         let contents = url.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
 
         let info: [String: Any] = [
             "CFBundleName": "Convert",
-            "NSServices": [[
-                "NSMenuItem": ["default": "Convert…"],
-                "NSMessage": "runWorkflowAsService",
-                "NSRequiredContext": ["NSApplicationIdentifier": "com.apple.finder"],
-                "NSSendFileTypes": fileTypes,
-                "NSIconName": "NSActionTemplate",
-            ]],
+            "NSServices": [
+                [
+                    "NSMenuItem": ["default": "Convert…"],
+                    "NSMessage": "runWorkflowAsService",
+                    "NSRequiredContext": ["NSApplicationIdentifier": "com.apple.finder"],
+                    "NSSendFileTypes": FileTypes.identifiers,
+                    "NSIconName": "NSActionTemplate",
+                ]
+            ],
         ]
         let uuid = { UUID().uuidString }
         let action: [String: Any] = [
             "AMAccepts": ["Container": "List", "Optional": true, "Types": ["com.apple.cocoa.string"]],
             "AMActionVersion": "2.0.3",
             "AMApplication": ["Automator"],
-            "AMParameterProperties": ["COMMAND_STRING": [:], "CheckedForUserDefaultShell": [:],
-                                      "inputMethod": [:], "shell": [:], "source": [:]],
+            "AMParameterProperties": [
+                "COMMAND_STRING": [:], "CheckedForUserDefaultShell": [:],
+                "inputMethod": [:], "shell": [:], "source": [:],
+            ],
             "AMProvides": ["Container": "List", "Types": ["com.apple.cocoa.string"]],
             "ActionBundlePath": "/System/Library/Automator/Run Shell Script.action",
             "ActionName": "Run Shell Script",
             "ActionParameters": [
                 "COMMAND_STRING": "open -b \(bundleID) \"$@\"\n",
                 "CheckedForUserDefaultShell": true,
-                "inputMethod": 1,            // pass files as arguments
+                "inputMethod": 1,  // pass files as arguments
                 "shell": "/bin/zsh",
                 "source": "",
             ],
@@ -86,7 +100,7 @@ enum QuickAction {
         ]
         try write(info, to: contents.appendingPathComponent("Info.plist"))
         try write(document, to: contents.appendingPathComponent("document.wflow"))
-        refreshServices()
+        if url == QuickAction.url { refreshServices() }
     }
 
     static func uninstall() throws {

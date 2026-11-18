@@ -28,10 +28,11 @@
 
 Select one or more files in Finder → right-click → **Quick Actions → Convert…**
 
-A small window opens showing only the formats that make sense for what you selected. Pick one and hit **Convert**. The new file lands next to the original (`song.opus` → `song.mp3`, and if that exists, `song 2.mp3`).
+A small window opens showing only the formats that make sense for what you selected. Pick one and hit **Convert**. The new file lands next to the original (`song.opus` → `song.mp3`, and if that exists, `song 2.mp3`). If the original's folder is read-only (a disk image, a locked disk), it's saved to your Downloads folder instead, and the window tells you.
 
-- **Batches:** select as many files as you like (of the same kind: audio, video, images, documents or PDFs) and they're converted one after another with one progress bar. Video and audio can be mixed, since a video can become audio.
-- **Move original to Trash:** tick the box and each original goes to the Trash once its conversion has finished. It only happens after the new file exists, and you can always put it back from the Trash.
+- **Batches:** select as many files as you like (of the same kind: audio, video, images, documents, PDFs or fonts) and they're converted one after another with one progress bar. Video and audio can be mixed, since a video can become audio.
+- **Stop:** ends the conversion that's running, whatever kind of file it is, and removes anything half-written (a partial file, or a folder with only some of a PDF's pages).
+- **Move original to Trash:** tick the box and each original goes to the Trash once its conversion has finished. It only happens after the new file exists next to it, and you can always put it back from the Trash.
 
 | You select | You can convert to |
 |---|---|
@@ -39,7 +40,8 @@ A small window opens showing only the formats that make sense for what you selec
 | 🎬 **Video** (mp4, mov, mkv, webm, avi, …) | MP4 (H.264 / HEVC / AV1), MOV (ProRes 422), WebM (VP9), MKV, animated GIF, **or any audio format** (pulls out the soundtrack) |
 | 🖼️ **Images** (heic, jpg, png, webp, tiff, raw, …) | JPEG, PNG, HEIC, AVIF, WebP, TIFF, GIF, BMP, PDF |
 | 📄 **Documents** (docx, doc, odt, rtf, html, txt, md) | PDF, Word (DOCX / DOC), ODT, RTF, plain text, HTML |
-| 📕 **PDF** | PNG or JPEG images (one per page), plain text |
+| 📕 **PDF** | PNG or JPEG images (one per page), Word (DOCX), ODT, RTF or plain text (the text only, see below) |
+| 🔤 **Fonts** (ttf, otf, ttc, woff, woff2) | WOFF2, WOFF (web fonts), TTF / OTF (desktop fonts) |
 
 **Settings** live under **Advanced** (collapsed until you open it; remembered per format):
 
@@ -52,13 +54,17 @@ A small window opens showing only the formats that make sense for what you selec
 
 You can also open the app on its own and drag files onto the window.
 
+**PDF to Word** gives you the PDF's text as an editable document: paragraphs are put back together, and fonts, sizes, bold and italic are kept where the PDF has them. Pictures, tables and the page layout are not carried over, and a scanned PDF (pictures of pages) has no text to take.
+
+**Fonts** are converted without loss: a web font and a desktop font hold the same data in a different wrapper, and Convert only changes the wrapper. A font taken out of a WOFF or WOFF2 file comes out as `.ttf` or `.otf`, whichever it was made from, and a collection (`.ttc`) becomes a folder with one file per font. Convert doesn't turn a TTF into a true OTF or back (that would mean redrawing every letter). Check a font's license before putting it on a website.
+
 ---
 
 ## Install
 
 ### 1. Install ffmpeg (needed for audio and video)
 
-Convert uses [ffmpeg](https://ffmpeg.org) for audio and video and `cwebp` for WebP images. Images (other than WebP), documents and PDFs work without them. The easiest way to install both is [Homebrew](https://brew.sh):
+Convert uses [ffmpeg](https://ffmpeg.org) for audio and video and `cwebp` for WebP images. Images (other than WebP), documents, PDFs and fonts work without them, and you can install them later: Convert notices without a restart. The easiest way to install both is [Homebrew](https://brew.sh):
 
 ```bash
 brew install ffmpeg webp
@@ -73,7 +79,7 @@ Convert isn't signed with a paid Apple Developer certificate, so the first time 
 - **macOS 15 and later:** try to open it once, then go to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and confirm.
 - **macOS 14:** right-click `Convert.app` → **Open** → **Open**.
 
-**Option B: build it yourself** (needs Xcode 15 or later):
+**Option B: build it yourself** (needs Xcode 15.3 or later):
 
 ```bash
 git clone https://github.com/newtonstudios/convert.git
@@ -100,7 +106,7 @@ If it doesn't show up, check **System Settings → General → Login Items & Ext
 
 ## Privacy
 
-Convert has no network code, no analytics and no accounts. It reads the files you give it and writes the converted files next to them. That's it.
+Convert has no network code, no analytics and no accounts. It reads the files you give it and writes the converted files next to them (or to Downloads, when their folder is read-only). That's it.
 
 ## Uninstall
 
@@ -113,28 +119,34 @@ Convert has no network code, no analytics and no accounts. It reads the files yo
 
 - **Markdown** covers the common syntax (headings, bold, italic, lists, task lists, tables, code, quotes, links). Footnotes, HTML inside Markdown and images aren't rendered.
 - **Excel and PowerPoint** files aren't supported (they'd need LibreOffice).
+- **PDF to Word** carries over text only (see above).
+- **Fonts:** no conversion between TrueType and CFF outlines (a real TTF ↔ OTF conversion), and WOFF2 files that hold several fonts aren't read.
 - **Converting images** keeps only the first frame of an animated GIF or a multi-image HEIC.
 - The **downloaded** app isn't notarized by Apple (see the install notes above).
 
 ## How it works (for the curious)
 
-It's a small SwiftUI app (~1,800 lines) with no dependencies beyond what's on your Mac:
+It's a small SwiftUI app (~4,300 lines) with no dependencies beyond what's on your Mac:
 
 | Kind | Engine |
 |---|---|
-| Audio & video | `ffmpeg`, using Apple's hardware encoders (VideoToolbox) for H.264, HEVC and ProRes |
+| Audio & video | `ffmpeg`, using Apple's hardware encoders (VideoToolbox) for H.264, HEVC and ProRes, and the software encoders on Macs that lack one |
 | Images | Apple's ImageIO (plus `cwebp` for WebP) |
-| Documents | macOS's built-in `textutil`, a small built-in Markdown renderer, and AppKit's text system for PDF output |
+| Documents | macOS's built-in `textutil`, a small built-in Markdown renderer, and AppKit's text system for PDF output (in a helper process, so a long document doesn't freeze the window) |
 | PDF | Core Graphics and PDFKit |
+| Fonts | Built in: the font tables are read and rewrapped directly, with zlib for WOFF and Brotli for WOFF2. WOFF2 files come out smallest when the `brotli` tool is installed (it comes with ffmpeg from Homebrew); without it, macOS's own, lighter Brotli is used, and they're about a fifth larger (still smaller than WOFF) |
 
 The Finder menu item is a tiny Automator Quick Action (`~/Library/Services/Convert.workflow`) that runs `open -b local.convert.app <files>`.
 
 | File | What's in it |
 |---|---|
-| `Sources/Convert/Formats.swift` | File type detection, output formats, per-format options |
+| `Sources/Convert/Formats.swift` | The list of accepted file types, file type detection, output formats, per-format options |
+| `Sources/Convert/Sniff.swift` | Looks inside a file when its name can't be trusted (`.ts`, misnamed files) |
+| `Sources/Convert/Converter.swift`, `Process.swift` | Runs one conversion; external tools, Stop, where output goes |
 | `Sources/Convert/FFmpeg.swift` | ffmpeg arguments for each audio/video format |
 | `Sources/Convert/ImageConv.swift` | Image conversion |
-| `Sources/Convert/DocConv.swift` | Document conversion, document → PDF, PDF → images/text |
+| `Sources/Convert/DocConv.swift`, `PDFText.swift` | Document conversion, document → PDF, PDF → images/text/Word |
+| `Sources/Convert/FontConv.swift`, `SFNT.swift`, `WOFF.swift`, `WOFF2.swift` | Font conversion: TrueType/OpenType files, and the two web font wrappers |
 | `Sources/Convert/Markdown.swift` | Markdown → HTML |
 | `Sources/Convert/ConvertModel.swift`, `ContentView.swift` | The window and its state |
 | `Sources/Convert/QuickAction.swift` | Installs/removes the Finder Quick Action |
@@ -143,8 +155,27 @@ The Finder menu item is a tiny Automator Quick Action (`~/Library/Services/Conve
 
 ```bash
 build/Convert.app/Contents/MacOS/Convert --cli mp3 song.opus
-build/Convert.app/Contents/MacOS/Convert --cli        # lists all format IDs
+build/Convert.app/Contents/MacOS/Convert --cli                      # lists all format IDs
+build/Convert.app/Contents/MacOS/Convert --cli --targets song.opus  # the formats offered for a file
+CONVERT_SETTINGS='{"hardware": false}' build/Convert.app/Contents/MacOS/Convert --cli mp4-h264 clip.mov
 ```
+
+`CONVERT_SETTINGS` changes individual settings; the names are the fields of `ConvSettings` in `Formats.swift`. `CONVERT_FALLBACK_DIR` replaces Downloads as the folder used when the original's folder is read-only.
+
+### Checks and the smoke test
+
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`, using the same script you can run locally:
+
+```bash
+scripts/check.sh                 # everything below
+scripts/check.sh format          # swift-format lint; `scripts/check.sh format --fix` reformats
+scripts/check.sh build           # debug build and tests (warnings are errors), then the release app
+scripts/check.sh smoke           # rebuild the release app, then run the conversion smoke test
+```
+
+The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text, a PDF, two `.ts` files: TypeScript source and an MPEG transport stream, and fonts copied from the ones that come with macOS) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off; on a machine without a hardware encoder, the normal run checks that the app falls back to the software one.
+
+You need Xcode 26.6 or its Command Line Tools: CI uses that version, and its `swift-format` (6.3) decides the formatting. With only the Command Line Tools, `build` and `smoke` use a native release build, since the universal app needs Xcode; CI builds and tests the universal app.
 
 ### The icon
 

@@ -4,27 +4,20 @@ import UniformTypeIdentifiers
 // MARK: - Input kinds
 
 enum MediaKind: String, CaseIterable {
-    case audio, video, image, pdf, document
+    case audio, video, image, pdf, document, font
 
-    private static let videoExts: Set<String> = ["mkv", "webm", "avi", "flv", "wmv", "ts", "mts", "m2ts", "3gp", "ogv", "mxf", "vob"]
-    private static let audioExts: Set<String> = ["mka", "opus", "ape", "wv", "tta", "dsf", "dff", "ac3", "dts", "amr", "mp2", "caf"]
-
-    private static let documentTypes: [UTType] = [.rtf, .rtfd, .plainText, .html, .webArchive] +
-        ["org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
-         "org.oasis-open.opendocument.text", "net.daringfireball.markdown"].compactMap { UTType($0) }
-
+    /// The kind of file this is, going by its name (see `FileTypes` for the list), and by its
+    /// contents where the name is ambiguous: `.ts` is a video transport stream, or TypeScript.
     static func of(_ url: URL) -> MediaKind? {
         let ext = url.pathExtension.lowercased()
-        if videoExts.contains(ext) { return .video }
-        if audioExts.contains(ext) { return .audio }
-        if ext == "md" || ext == "markdown" { return .document }
-        guard let t = UTType(filenameExtension: ext) else { return nil }
-        if t.conforms(to: .pdf) { return .pdf }
-        if t.conforms(to: .image) { return .image }
-        if t.conforms(to: .audio) { return .audio }
-        if t.conforms(to: .audiovisualContent) { return .video }
-        if documentTypes.contains(where: { t.conforms(to: $0) }) { return .document }
-        return nil
+        if ext == "ts", let head = Sniff.header(of: url), !head.isEmpty,
+            !Sniff.isTransportStream(head), Sniff.looksLikeText(head)
+        {
+            return .document
+        }
+        if let extra = FileTypes.extraExtensions.first(where: { $0.exts.contains(ext) }) { return extra.kind }
+        guard let type = UTType(filenameExtension: ext) else { return nil }
+        return FileTypes.contentTypes.first { $0.types.contains { type.conforms(to: $0) } }?.kind
     }
 
     var outputGroups: Set<OutGroup> {
@@ -34,6 +27,7 @@ enum MediaKind: String, CaseIterable {
         case .image: [.image]
         case .pdf: [.pdfPages]
         case .document: [.document]
+        case .font: [.font]
         }
     }
 
@@ -44,6 +38,7 @@ enum MediaKind: String, CaseIterable {
         case .image: "photo"
         case .pdf: "doc.richtext"
         case .document: "doc.text"
+        case .font: "textformat"
         }
     }
 
@@ -54,7 +49,55 @@ enum MediaKind: String, CaseIterable {
         case .image: "Image"
         case .pdf: "PDF"
         case .document: "Document"
+        case .font: "Font"
         }
+    }
+}
+
+// MARK: - Accepted file types
+
+/// The one list of what Convert accepts. File-kind detection reads it, the Finder Quick Action
+/// sends exactly these types, and a test checks that Resources/Info.plist declares the same ones.
+enum FileTypes {
+    /// Content type identifiers by kind, in the order detection tries them
+    /// (PDF and images before the broader audio/video types, documents last). macOS has no type
+    /// for WOFF2; the app bundle declares `org.w3c.woff2` itself.
+    static let accepted: [(kind: MediaKind, identifiers: [String])] = [
+        (.pdf, ["com.adobe.pdf"]),
+        (.image, ["public.image"]),
+        (.audio, ["public.audio"]),
+        (.video, ["public.movie", "public.audiovisual-content"]),
+        (
+            .font,
+            [
+                "public.truetype-ttf-font", "public.opentype-font", "public.truetype-collection-font",
+                "public.opentype-collection-font", "org.w3c.woff", "org.w3c.woff2",
+            ]
+        ),
+        (
+            .document,
+            [
+                "public.plain-text", "public.rtf", "com.apple.rtfd", "public.html", "com.apple.webarchive",
+                "org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc",
+                "org.oasis-open.opendocument.text", "net.daringfireball.markdown",
+            ]
+        ),
+    ]
+
+    /// Extensions macOS has no content type for (or files it under a different one), by kind.
+    static let extraExtensions: [(kind: MediaKind, exts: Set<String>)] = [
+        (.video, ["mkv", "webm", "avi", "flv", "wmv", "ts", "mts", "m2ts", "3gp", "ogv", "mxf", "vob"]),
+        (.audio, ["mka", "opus", "ape", "wv", "tta", "dsf", "dff", "ac3", "dts", "amr", "mp2", "caf"]),
+        (.document, ["md", "markdown"]),
+        (.font, ["woff2"]),
+    ]
+
+    /// Every accepted content type identifier: what the Quick Action and the app bundle declare.
+    static var identifiers: [String] { accepted.flatMap(\.identifiers) }
+
+    /// `accepted` as content types; an identifier this Mac doesn't know is left out.
+    static let contentTypes: [(kind: MediaKind, types: [UTType])] = accepted.map { entry in
+        (entry.kind, entry.identifiers.compactMap { UTType($0) })
     }
 }
 
@@ -66,6 +109,7 @@ enum OutGroup: String, CaseIterable {
     case image = "Image"
     case document = "Document"
     case pdfPages = "From PDF"
+    case font = "Font"
 }
 
 struct Target: Identifiable, Hashable {
@@ -76,57 +120,84 @@ struct Target: Identifiable, Hashable {
 }
 
 enum Targets {
-    static let all: [Target] = {
+    /// Every format, in menu order. WebP is only offered while cwebp is installed; that's checked
+    /// on each use, so it shows up as soon as cwebp does.
+    static var all: [Target] { Tools.cwebp == nil ? catalogue.filter { $0.id != "webp" } : catalogue }
+
+    private static let catalogue: [Target] = {
         func t(_ g: OutGroup, _ list: [(String, String, String)]) -> [Target] {
             list.map { Target(id: $0.0, label: $0.1, ext: $0.2, group: g) }
         }
-        var webp: [(String, String, String)] = []
-        if Tools.cwebp != nil { webp = [("webp", "WebP", "webp")] }
-        return t(.video, [
-            ("mp4-h264", "MP4 (H.264)", "mp4"),
-            ("mp4-hevc", "MP4 (HEVC / H.265)", "mp4"),
-            ("mov-prores", "MOV (ProRes 422)", "mov"),
-            ("webm", "WebM (VP9)", "webm"),
-            ("mkv", "MKV (H.264)", "mkv"),
-            ("mp4-av1", "MP4 (AV1)", "mp4"),
-            ("gif", "GIF (animated)", "gif"),
-        ]) + t(.audio, [
-            ("mp3", "MP3", "mp3"),
-            ("m4a", "M4A (AAC)", "m4a"),
-            ("he-aac", "M4A (HE-AAC, small)", "m4a"),
-            ("wav", "WAV", "wav"),
-            ("aiff", "AIFF", "aiff"),
-            ("flac", "FLAC", "flac"),
-            ("alac", "ALAC (Apple Lossless)", "m4a"),
-            ("opus", "Opus", "opus"),
-            ("ogg", "OGG (Vorbis)", "ogg"),
-            ("wma", "WMA", "wma"),
-            ("ac3", "AC3 (Dolby Digital)", "ac3"),
-            ("wv", "WavPack", "wv"),
-            ("mp2", "MP2", "mp2"),
-        ]) + t(.image, [
-            ("jpg", "JPEG", "jpg"),
-            ("png", "PNG", "png"),
-            ("heic", "HEIC", "heic"),
-            ("avif", "AVIF", "avif"),
-        ] + webp + [
-            ("tiff", "TIFF", "tiff"),
-            ("gif-img", "GIF", "gif"),
-            ("bmp", "BMP", "bmp"),
-            ("pdf-img", "PDF", "pdf"),
-        ]) + t(.document, [
-            ("pdf-doc", "PDF", "pdf"),
-            ("docx", "Word (DOCX)", "docx"),
-            ("doc", "Word 97–2004 (DOC)", "doc"),
-            ("odt", "OpenDocument (ODT)", "odt"),
-            ("rtf", "Rich Text (RTF)", "rtf"),
-            ("txt", "Plain Text", "txt"),
-            ("html", "HTML", "html"),
-        ]) + t(.pdfPages, [
-            ("pdf-png", "PNG (one per page)", "png"),
-            ("pdf-jpg", "JPEG (one per page)", "jpg"),
-            ("pdf-txt", "Plain Text", "txt"),
-        ])
+        return t(
+            .video,
+            [
+                ("mp4-h264", "MP4 (H.264)", "mp4"),
+                ("mp4-hevc", "MP4 (HEVC / H.265)", "mp4"),
+                ("mov-prores", "MOV (ProRes 422)", "mov"),
+                ("webm", "WebM (VP9)", "webm"),
+                ("mkv", "MKV (H.264)", "mkv"),
+                ("mp4-av1", "MP4 (AV1)", "mp4"),
+                ("gif", "GIF (animated)", "gif"),
+            ])
+            + t(
+                .audio,
+                [
+                    ("mp3", "MP3", "mp3"),
+                    ("m4a", "M4A (AAC)", "m4a"),
+                    ("he-aac", "M4A (HE-AAC, small)", "m4a"),
+                    ("wav", "WAV", "wav"),
+                    ("aiff", "AIFF", "aiff"),
+                    ("flac", "FLAC", "flac"),
+                    ("alac", "ALAC (Apple Lossless)", "m4a"),
+                    ("opus", "Opus", "opus"),
+                    ("ogg", "OGG (Vorbis)", "ogg"),
+                    ("wma", "WMA", "wma"),
+                    ("ac3", "AC3 (Dolby Digital)", "ac3"),
+                    ("wv", "WavPack", "wv"),
+                    ("mp2", "MP2", "mp2"),
+                ])
+            + t(
+                .image,
+                [
+                    ("jpg", "JPEG", "jpg"),
+                    ("png", "PNG", "png"),
+                    ("heic", "HEIC", "heic"),
+                    ("avif", "AVIF", "avif"),
+                    ("webp", "WebP", "webp"),
+                    ("tiff", "TIFF", "tiff"),
+                    ("gif-img", "GIF", "gif"),
+                    ("bmp", "BMP", "bmp"),
+                    ("pdf-img", "PDF", "pdf"),
+                ])
+            + t(
+                .document,
+                [
+                    ("pdf-doc", "PDF", "pdf"),
+                    ("docx", "Word (DOCX)", "docx"),
+                    ("doc", "Word 97–2004 (DOC)", "doc"),
+                    ("odt", "OpenDocument (ODT)", "odt"),
+                    ("rtf", "Rich Text (RTF)", "rtf"),
+                    ("txt", "Plain Text", "txt"),
+                    ("html", "HTML", "html"),
+                ])
+            + t(
+                .pdfPages,
+                [
+                    ("pdf-png", "PNG (one per page)", "png"),
+                    ("pdf-jpg", "JPEG (one per page)", "jpg"),
+                    ("pdf-docx", "Word (DOCX, text only)", "docx"),
+                    ("pdf-odt", "OpenDocument (ODT, text only)", "odt"),
+                    ("pdf-rtf", "Rich Text (RTF, text only)", "rtf"),
+                    ("pdf-txt", "Plain Text", "txt"),
+                ])
+            + t(
+                .font,
+                [
+                    ("font-woff2", "WOFF2 (web font)", "woff2"),
+                    ("font-woff", "WOFF (web font)", "woff"),
+                    // .ttf or .otf, whichever the font inside is.
+                    ("font-desktop", "TTF / OTF (desktop font)", "ttf"),
+                ])
     }()
 
     static func byID(_ id: String) -> Target? { all.first { $0.id == id } }
@@ -148,6 +219,7 @@ enum Targets {
         case .image: order = ["jpg", "png"]
         case .pdf: order = ["pdf-png"]
         case .document: order = ["pdf-doc", "docx"]
+        case .font: order = ["font-woff2", "font-desktop"]
         default: order = []
         }
         for id in order {
@@ -198,28 +270,57 @@ extension Target {
 
     var hasChannelOption: Bool { id != "ogg" }
 
+    /// PDF → a text format: the words and their fonts, without pictures or page layout.
+    var isPDFText: Bool { ["pdf-txt", "pdf-docx", "pdf-odt", "pdf-rtf"].contains(id) }
+
     /// Whether the panel has anything to show under "Advanced" for this format.
-    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && id != "pdf-txt" }
+    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && !isPDFText && group != .font }
 }
 
 struct ConvSettings: Codable, Equatable {
     // Audio
-    var audioBitrate = 0          // kbps; 0 = MP3 VBR best
-    var sampleRate = 0            // 0 = same as source
-    var channels = 0              // 0 = same, 1 = mono, 2 = stereo
-    var bitDepth = 0              // 0 = auto (match source), 16, 24
+    var audioBitrate = 0  // kbps; 0 = MP3 VBR best
+    var sampleRate = 0  // 0 = same as source
+    var channels = 0  // 0 = same, 1 = mono, 2 = stereo
+    var bitDepth = 0  // 0 = auto (match source), 16, 24
     // Video
-    var videoQuality = 0.65       // 0 = smallest … 1 = best
-    var videoHeight = 0           // 0 = same as source
-    var fps = 0                   // 0 = same as source
+    var videoQuality = 0.65  // 0 = smallest … 1 = best
+    var videoHeight = 0  // 0 = same as source
+    var fps = 0  // 0 = same as source
     var keepAudio = true
     var hardware = true
     var gifWidth = 480
     var gifFps = 15
     // Image
     var imageQuality = 0.85
-    var maxSize = 0               // longest edge in px; 0 = same as source
+    var maxSize = 0  // longest edge in px; 0 = same as source
     // Documents / PDF
     var paperA4 = true
     var pdfDPI = 150
+
+    init() {}
+
+    /// Settings are saved per format as JSON. A key that's missing keeps its default, so settings
+    /// saved by an older version survive an update that adds a field; unknown keys are ignored.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func read<T: Decodable>(_ key: CodingKeys, into value: inout T) throws {
+            if let saved = try c.decodeIfPresent(T.self, forKey: key) { value = saved }
+        }
+        try read(.audioBitrate, into: &audioBitrate)
+        try read(.sampleRate, into: &sampleRate)
+        try read(.channels, into: &channels)
+        try read(.bitDepth, into: &bitDepth)
+        try read(.videoQuality, into: &videoQuality)
+        try read(.videoHeight, into: &videoHeight)
+        try read(.fps, into: &fps)
+        try read(.keepAudio, into: &keepAudio)
+        try read(.hardware, into: &hardware)
+        try read(.gifWidth, into: &gifWidth)
+        try read(.gifFps, into: &gifFps)
+        try read(.imageQuality, into: &imageQuality)
+        try read(.maxSize, into: &maxSize)
+        try read(.paperA4, into: &paperA4)
+        try read(.pdfDPI, into: &pdfDPI)
+    }
 }

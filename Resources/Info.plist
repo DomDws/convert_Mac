@@ -29,6 +29,12 @@
 				<string>com.microsoft.word.doc</string>
 				<string>org.oasis-open.opendocument.text</string>
 				<string>net.daringfireball.markdown</string>
+				<string>public.truetype-ttf-font</string>
+				<string>public.opentype-font</string>
+				<string>public.truetype-collection-font</string>
+				<string>public.opentype-collection-font</string>
+				<string>org.w3c.woff</string>
+				<string>org.w3c.woff2</string>
 			</array>
 		</dict>
 	</array>
@@ -43,9 +49,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3</string>
+	<string>0.4</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
@@ -54,5 +60,29 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.font</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>WOFF2 font</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.w3c.woff2</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>woff2</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>font/woff2</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
