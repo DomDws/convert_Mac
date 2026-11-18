@@ -24,7 +24,7 @@ enum ImageConv {
         }
         let opaque = ["jpg", "bmp"].contains(t.id)
         let image = try render(src, maxSize: s.maxSize, flatten: opaque)
-        let out = uniqueOutput(for: input, ext: t.ext)
+        let out = try uniqueOutput(for: input, ext: t.ext)
 
         if t.id == "webp" {
             try writeWebP(image, to: out, quality: s.imageQuality)
@@ -42,9 +42,15 @@ enum ImageConv {
     }
 
     static func write(_ image: CGImage, to out: URL, type: UTType?, label: String, props: [CFString: Any]) throws {
-        guard let type, let dest = CGImageDestinationCreateWithURL(out as CFURL, type.identifier as CFString, 1, nil)
-        else {
-            throw ConvertError("This Mac can't write \(label)")
+        guard let type else { throw ConvertError("This Mac can't write \(label)") }
+        guard let dest = CGImageDestinationCreateWithURL(out as CFURL, type.identifier as CFString, 1, nil) else {
+            // A format this Mac can write, but the file can't be created: that's the folder, not the format.
+            let writable = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
+            throw ConvertError(
+                writable.contains(type.identifier)
+                    ? "Couldn't save to “\(OutputFolder.name(of: out.deletingLastPathComponent()))”: "
+                        + "that folder can't be written to"
+                    : "This Mac can't write \(label)")
         }
         CGImageDestinationAddImage(dest, image, props as CFDictionary)
         guard CGImageDestinationFinalize(dest) else {

@@ -16,6 +16,8 @@ final class ConvertModel: ObservableObject {
     @Published private(set) var errors: [String] = []
     @Published private(set) var stopped = false
     @Published private(set) var trashed = 0
+    /// Set when outputs couldn't go next to their originals (read-only folder) and were saved here instead.
+    @Published private(set) var savedElsewhere: URL?
     /// Move each original to the Trash once its conversion succeeded (remembered).
     @Published var trashOriginals = UserDefaults.standard.bool(forKey: "trashOriginals") {
         didSet { UserDefaults.standard.set(trashOriginals, forKey: "trashOriginals") }
@@ -59,6 +61,7 @@ final class ConvertModel: ObservableObject {
         progress = 0
         stopped = false
         trashed = 0
+        savedElsewhere = nil
     }
 
     private func chooseTarget() {
@@ -120,10 +123,10 @@ final class ConvertModel: ObservableObject {
                 do {
                     let made = try await Converter.convert(file, to: t, settings: s, runner: runner, progress: report)
                     outputs += made
-                    // Only after a finished, separate output exists on disk; the Trash keeps it recoverable.
-                    if trash, !stopped, !made.isEmpty, !made.contains(file),
-                        made.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) })
-                    {
+                    if let moved = made.first(where: { OutputFolder.isFallback($0, for: file) }) {
+                        savedElsewhere = moved.deletingLastPathComponent()
+                    }
+                    if trash, Self.mayTrash(file, outputs: made, stopped: stopped) {
                         do {
                             try FileManager.default.trashItem(at: file, resultingItemURL: nil)
                             trashed += 1
@@ -138,6 +141,15 @@ final class ConvertModel: ObservableObject {
             progress = 1
             phase = .done
         }
+    }
+
+    /// Whether an original may go to the Trash (which keeps it recoverable): only once its finished,
+    /// separate output sits next to it. Never after Stop, and never when the output had to be saved
+    /// somewhere else, so the original and its conversion don't end up in different places.
+    nonisolated static func mayTrash(_ original: URL, outputs: [URL], stopped: Bool) -> Bool {
+        !stopped && !outputs.isEmpty && !outputs.contains(original)
+            && outputs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+            && !outputs.contains { OutputFolder.isFallback($0, for: original) }
     }
 
     func cancel() {

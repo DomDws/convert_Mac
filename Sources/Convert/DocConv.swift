@@ -23,7 +23,7 @@ enum DocConv {
     }
 
     static func textutil(_ input: URL, _ t: Target) throws -> URL {
-        let out = uniqueOutput(for: input, ext: t.ext)
+        let out = try uniqueOutput(for: input, ext: t.ext)
         let src = try source(for: input)
         defer { src.cleanup() }
         if Markdown.isMarkdown(input), t.ext == "html" {
@@ -109,7 +109,7 @@ enum PDFConv {
             else {
                 throw ConvertError("This PDF contains no extractable text")
             }
-            let out = uniqueOutput(for: input, ext: "txt")
+            let out = try uniqueOutput(for: input, ext: "txt")
             try text.write(to: out, atomically: true, encoding: .utf8)
             return [out]
         }
@@ -122,11 +122,11 @@ enum PDFConv {
         // One page → file next to the PDF. Several → a folder with page 1, page 2, …
         var folder: URL?
         if count > 1 {
-            let f = uniqueFolder(for: input, suffix: " pages")
+            let f = try uniqueFolder(for: input, suffix: " pages")
             try FileManager.default.createDirectory(at: f, withIntermediateDirectories: true)
             folder = f
         }
-        let single = uniqueOutput(for: input, ext: t.ext)
+        let single = try uniqueOutput(for: input, ext: t.ext)
         let scale = CGFloat(s.pdfDPI) / 72
         let type = ImageConv.utType(t.id)
         var props: [CFString: Any] = [:]

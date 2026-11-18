@@ -14,6 +14,9 @@
 # A conversion passes when the app exits 0, prints no FAIL line, and writes at least one
 # non-empty file. Each conversion gets $SMOKE_TIMEOUT seconds (default 120).
 #
+# One conversion of every kind also runs from a read-only folder, where the output has to
+# go to the fallback folder instead.
+#
 # Formats with a hardware encoder (H.264, HEVC, ProRes, MKV) also run with hardware
 # encoding off. The hardware runs are skipped when this machine has no such encoder
 # (e.g. GitHub's macOS VMs); the software runs must always pass.
@@ -270,6 +273,45 @@ for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt scri
     fi
   done
 done
+
+# --- Read-only source folder ----------------------------------------------------------
+# When the original's folder can't be written to, the output goes to a fallback folder
+# (Downloads; CONVERT_FALLBACK_DIR points it at a folder of ours) and the app says so.
+# One conversion of every kind.
+
+RO="$OUT/read-only" FALLBACK="$OUT/fallback"
+RO_CASES="sample.png:jpg sample.wav:mp3 sample.mp4:gif sample.md:pdf-doc sample.txt:docx sample.pdf:pdf-png sample.pdf:pdf-txt"
+mkdir -p "$RO" "$FALLBACK"
+for pair in $RO_CASES; do
+  [[ -f "$SAMPLES/${pair%%:*}" ]] && cp "$SAMPLES/${pair%%:*}" "$RO/"
+done
+chmod a-w "$RO"
+for pair in $RO_CASES; do
+  name="${pair%%:*}" target="${pair##*:}" label="read-only:${pair##*:}"
+  if [[ ! -f "$RO/$name" ]]; then
+    if [[ -z "$FFMPEG" && $name != sample.md && $name != sample.txt && $name != sample.pdf && $STRICT -eq 0 ]]; then
+      skip "$label" "$name" "ffmpeg not installed"
+    else
+      fail "$label" "$name" "sample couldn't be created"
+    fi
+    continue
+  fi
+  log="$RUNS/read-only-$name-$target.log"
+  before="$(find "$FALLBACK" -type f -size +0 | wc -l | tr -d ' ')"
+  CONVERT_FALLBACK_DIR="$FALLBACK" perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" "$BIN" --cli "$target" "$RO/$name" >"$log" 2>&1
+  status=$?
+  after="$(find "$FALLBACK" -type f -size +0 | wc -l | tr -d ' ')"
+  if [[ $status -ne 0 ]] || grep -q '^FAIL' "$log"; then
+    fail "$label" "$name" "$(grep -m1 '^FAIL' "$log" || tail -n1 "$log") (exit $status)"
+  elif [[ "$after" -le "$before" ]]; then
+    fail "$label" "$name" "nothing was written to the fallback folder"
+  elif ! grep -q "saved to $FALLBACK" "$log"; then
+    fail "$label" "$name" "the app didn't say where it saved the file"
+  else
+    pass "$label" "$name" "saved to the fallback folder"
+  fi
+done
+chmod u+w "$RO"
 
 # Every format the app lists must have been tried by at least one sample.
 for target in $ALL_TARGETS; do

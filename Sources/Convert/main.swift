@@ -38,6 +38,9 @@ func runCLI(_ args: [String]) {
                 print(
                     "OK   \(url.lastPathComponent) → \(outs.map(\.lastPathComponent).joined(separator: ", ")) (\(secs))"
                 )
+                if let moved = outs.first(where: { OutputFolder.isFallback($0, for: url) }) {
+                    print("     saved to \(moved.deletingLastPathComponent().path): the original's folder is read-only")
+                }
             } catch {
                 failed = true
                 print("FAIL \(url.lastPathComponent): \(error.localizedDescription)")

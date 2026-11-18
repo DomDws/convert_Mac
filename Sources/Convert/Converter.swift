@@ -16,7 +16,7 @@ enum Converter {
             let p = await Task.detached { FF.probe(input) }.value
             if p.ok, t.group == .audio, !p.hasAudio { throw ConvertError("This file has no audio track") }
             if p.ok, t.group == .video, !p.hasVideo { throw ConvertError("This file has no video track") }
-            let out = uniqueOutput(for: input, ext: t.ext)
+            let out = try uniqueOutput(for: input, ext: t.ext)
             let codec = t.group == .audio ? FF.audioArgs(t, s, p) : FF.videoArgs(t, s, p)
             let args = FF.common + ["-i", input.path] + codec + [out.path]
             do {
@@ -32,7 +32,7 @@ enum Converter {
 
         case .document:
             if t.id == "pdf-doc" {
-                let out = uniqueOutput(for: input, ext: "pdf")
+                let out = try uniqueOutput(for: input, ext: "pdf")
                 try await MainActor.run { try DocConv.toPDF(input, out, a4: s.paperA4) }
                 return [out]
             }

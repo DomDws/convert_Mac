@@ -47,9 +47,45 @@ func runSync(_ exe: String, _ args: [String]) throws -> String {
     return String(decoding: data, as: UTF8.self)
 }
 
-/// Next free file name next to the input: "name.ext", then "name 2.ext", …
-func uniqueOutput(for input: URL, ext: String, suffix: String = "") -> URL {
-    let dir = input.deletingLastPathComponent()
+/// Where converted files go: next to the original, or a fallback folder when that isn't possible.
+enum OutputFolder {
+    /// Used when the original's folder can't be written to (a read-only disk or disk image, no permission).
+    /// Downloads; `CONVERT_FALLBACK_DIR` replaces it for tests.
+    static var fallback: URL {
+        if let dir = ProcessInfo.processInfo.environment["CONVERT_FALLBACK_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: dir, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+    }
+
+    /// The folder to write a conversion of `input` into.
+    static func directory(for input: URL, fallback: URL = OutputFolder.fallback) throws -> URL {
+        let dir = input.deletingLastPathComponent()
+        if FileManager.default.isWritableFile(atPath: dir.path) { return dir }
+        guard FileManager.default.isWritableFile(atPath: fallback.path) else {
+            throw ConvertError(
+                "Can't save the converted file: the original's folder is read-only, and "
+                    + "“\(name(of: fallback))” can't be written to either")
+        }
+        return fallback
+    }
+
+    /// Whether `output` was written somewhere other than next to `input`.
+    static func isFallback(_ output: URL, for input: URL) -> Bool {
+        output.deletingLastPathComponent().standardizedFileURL.path
+            != input.deletingLastPathComponent().standardizedFileURL.path
+    }
+
+    /// The folder's name as Finder shows it.
+    static func name(of folder: URL) -> String { FileManager.default.displayName(atPath: folder.path) }
+}
+
+/// Next free file name next to the input (or in the fallback folder): "name.ext", then "name 2.ext", …
+func uniqueOutput(
+    for input: URL, ext: String, suffix: String = "", fallback: URL = OutputFolder.fallback
+) throws -> URL {
+    let dir = try OutputFolder.directory(for: input, fallback: fallback)
     let base = input.deletingPathExtension().lastPathComponent + suffix
     var url = dir.appendingPathComponent(base).appendingPathExtension(ext)
     var n = 2
@@ -60,8 +96,8 @@ func uniqueOutput(for input: URL, ext: String, suffix: String = "") -> URL {
     return url
 }
 
-func uniqueFolder(for input: URL, suffix: String) -> URL {
-    let dir = input.deletingLastPathComponent()
+func uniqueFolder(for input: URL, suffix: String, fallback: URL = OutputFolder.fallback) throws -> URL {
+    let dir = try OutputFolder.directory(for: input, fallback: fallback)
     let base = input.deletingPathExtension().lastPathComponent + suffix
     var url = dir.appendingPathComponent(base, isDirectory: true)
     var n = 2

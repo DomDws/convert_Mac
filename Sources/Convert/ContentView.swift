@@ -229,6 +229,15 @@ struct ContentView: View {
                     )
                     .foregroundStyle(.green)
                 }
+                if let folder = model.savedElsewhere {
+                    Label(
+                        "Saved to \(OutputFolder.name(of: folder)) because the original's folder is read-only"
+                            + (model.trashOriginals ? ". The original stays where it is." : ""),
+                        systemImage: "folder"
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 if model.trashed > 0 {
                     Label(
                         "Moved \(model.trashed == 1 ? "the original" : "\(model.trashed) originals") to the Trash",
