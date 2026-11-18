@@ -27,7 +27,7 @@ struct ContentView: View {
                 dropZone
             } else if model.groups.isEmpty {
                 Label(
-                    "These files can't be converted together. Pick files of one kind (audio, video, images, documents or PDFs).",
+                    "These files can't be converted together. Pick files of one kind (audio, video, images, documents, PDFs or fonts).",
                     systemImage: "exclamationmark.triangle"
                 )
                 .foregroundStyle(.secondary)
@@ -116,7 +116,7 @@ struct ContentView: View {
         VStack(spacing: 12) {
             VStack(spacing: 10) {
                 Image(systemName: "tray.and.arrow.down").font(.system(size: 30)).foregroundStyle(.secondary)
-                Text("Drop audio, video, images, documents or PDFs").foregroundStyle(.secondary)
+                Text("Drop audio, video, images, documents, PDFs or fonts").foregroundStyle(.secondary)
                 Button("Choose Files…") { chooseFiles() }
             }
             .frame(maxWidth: .infinity)
@@ -303,6 +303,7 @@ struct SettingsView: View {
             case .image: image
             case .document: document
             case .pdfPages: pdf
+            case .font: EmptyView()
             }
         }
     }

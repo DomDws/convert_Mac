@@ -42,6 +42,8 @@ struct FileTypesTests {
             ("notes.md", .document), ("notes.markdown", .document), ("notes.txt", .document),
             ("letter.docx", .document), ("letter.doc", .document), ("letter.odt", .document),
             ("letter.rtf", .document), ("page.html", .document), ("main.swift", .document),
+            ("type.ttf", .font), ("type.otf", .font), ("type.ttc", .font), ("type.woff", .font),
+            ("type.WOFF2", .font),
             ("archive.zip", nil), ("disk.dmg", nil), ("noextension", nil), ("file.unknownext", nil),
         ]
         for (name, kind) in expected {

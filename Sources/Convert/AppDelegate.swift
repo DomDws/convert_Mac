@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        QuickAction.updateIfOutdated()
         // Launched by double-click (no files)? Show an empty drop panel.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self, self.windows.isEmpty else { return }

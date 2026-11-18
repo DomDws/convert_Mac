@@ -134,6 +134,19 @@ enum Sniff {
         }
         if isTransportStream(d) { return Format(name: "an MPEG transport stream", ext: "ts", kinds: [.video]) }
 
+        // Fonts. A plain TrueType file starts with a version number, so its table count has to add up too.
+        if at(0, "wOF2") { return Format(name: "a WOFF2 font", ext: "woff2", kinds: [.font]) }
+        if at(0, "wOFF") { return Format(name: "a WOFF font", ext: "woff", kinds: [.font]) }
+        if at(0, "OTTO") { return Format(name: "an OpenType font", ext: "otf", kinds: [.font]) }
+        if at(0, "ttcf") { return Format(name: "a font collection", ext: "ttc", kinds: [.font]) }
+        if at(0, [0x00, 0x01, 0x00, 0x00]) || at(0, "true"), b.count >= 12 {
+            let tables = Int(b[4]) << 8 | Int(b[5])
+            let searchRange = Int(b[6]) << 8 | Int(b[7])
+            if tables > 0, tables < 256, searchRange == 16 << (Int.bitWidth - 1 - tables.leadingZeroBitCount) {
+                return Format(name: "a TrueType font", ext: "ttf", kinds: [.font])
+            }
+        }
+
         // Documents. A PDF can also be behind an image type (Illustrator files), so it passes for both.
         if at(0, "%PDF-") { return Format(name: "a PDF", ext: "pdf", kinds: [.pdf, .image]) }
         if at(0, "{\\rtf") { return Format(name: "a Rich Text document", ext: "rtf", kinds: [.document]) }

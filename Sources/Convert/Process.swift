@@ -26,6 +26,8 @@ enum Tools {
     static var ffmpeg: String? { find("ffmpeg") }
     static var ffprobe: String? { find("ffprobe") }
     static var cwebp: String? { find("cwebp") }
+    /// Optional: makes WOFF2 fonts smaller than macOS's own Brotli encoder can.
+    static var brotli: String? { find("brotli") }
 }
 
 func lastLine(_ data: Data) -> String? {

@@ -14,7 +14,24 @@ enum QuickAction {
         FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/document.wflow").path)
     }
 
-    static func install() throws {
+    /// The file types an installed Quick Action is offered for; nil when there's none to read.
+    static func installedTypes(at url: URL = QuickAction.url) -> [String]? {
+        guard let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
+            let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let services = info["NSServices"] as? [[String: Any]]
+        else { return nil }
+        return services.first?["NSSendFileTypes"] as? [String]
+    }
+
+    /// A Quick Action installed by an older version doesn't list the file types added since
+    /// (fonts, in 0.4), so Finder wouldn't offer "Convert…" for them. It's written again when
+    /// the app opens. One the user removed stays removed.
+    static func updateIfOutdated(at url: URL = QuickAction.url) {
+        guard let types = installedTypes(at: url), Set(types) != Set(FileTypes.identifiers) else { return }
+        try? install(at: url)
+    }
+
+    static func install(at url: URL = QuickAction.url) throws {
         let contents = url.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
 
@@ -83,7 +100,7 @@ enum QuickAction {
         ]
         try write(info, to: contents.appendingPathComponent("Info.plist"))
         try write(document, to: contents.appendingPathComponent("document.wflow"))
-        refreshServices()
+        if url == QuickAction.url { refreshServices() }
     }
 
     static func uninstall() throws {

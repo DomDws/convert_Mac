@@ -45,6 +45,9 @@ enum Converter {
             return try await Task.detached {
                 try PDFConv.convert(input, t, s, runner: runner, progress: progress)
             }.value
+
+        case .font:
+            return try await FontConv.convert(input, t, runner: runner)
         }
     }
 

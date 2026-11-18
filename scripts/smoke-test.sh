@@ -17,6 +17,9 @@
 # One conversion of every kind also runs from a read-only folder, where the output has to
 # go to the fallback folder instead.
 #
+# Font samples are copies of fonts that come with macOS; nothing is committed. Converted
+# fonts are also checked for the right first bytes.
+#
 # Formats with a hardware encoder (H.264, HEVC, ProRes, MKV) also run with hardware
 # encoding off. On a machine without such an encoder (e.g. GitHub's macOS VMs) the hardware
 # run still has to pass: the app falls back to the software encoder by itself.
@@ -206,6 +209,33 @@ elif [[ -f "$SAMPLES/sample.pdf" ]]; then
   sips -s format png "$SAMPLES/sample.pdf" --out "$SAMPLES/sample.png" >/dev/null
 fi
 
+# Fonts: a TrueType font and a collection that come with macOS, plus that font as WOFF and
+# WOFF2, made by the app itself (so those two formats are also read, not just written).
+first_file() {
+  local f
+  for f in "$@"; do
+    [[ -f "$f" ]] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+FONTS=/System/Library/Fonts
+if font="$(first_file $FONTS/Monaco.ttf $FONTS/Geneva.ttf $FONTS/Supplemental/Arial.ttf)"; then
+  cp "$font" "$SAMPLES/sample.ttf"
+fi
+if font="$(first_file $FONTS/Noteworthy.ttc $FONTS/MarkerFelt.ttc $FONTS/Courier.ttc $FONTS/Helvetica.ttc)"; then
+  cp "$font" "$SAMPLES/sample.ttc"
+fi
+if [[ -f "$SAMPLES/sample.ttf" ]]; then
+  mkdir -p "$OUT/font-sample"
+  cp "$SAMPLES/sample.ttf" "$OUT/font-sample/"
+  for target in font-woff font-woff2; do
+    perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" "$BIN" --cli "$target" "$OUT/font-sample/sample.ttf" >>"$OUT/font-sample/output.log" 2>&1
+  done
+  for ext in woff woff2; do
+    [[ -s "$OUT/font-sample/sample.$ext" ]] && cp "$OUT/font-sample/sample.$ext" "$SAMPLES/"
+  done
+fi
+
 # --- Hardware encoders ----------------------------------------------------------------
 
 HW_OK=" "
@@ -219,7 +249,9 @@ fi
 
 # --- Conversions ----------------------------------------------------------------------
 
-for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt script.ts sample.pdf; do
+NEEDS_FFMPEG=" sample.mp4 stream.ts sample.wav sample.png "
+for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt script.ts sample.pdf \
+  sample.ttf sample.ttc sample.woff sample.woff2; do
   sample="$SAMPLES/$name"
   # Ask the app which formats it offers for this file (same logic as the window). It may look
   # inside the file, so ask about the sample itself; an empty stand-in is only for a sample
@@ -245,10 +277,10 @@ for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt scri
   for target in $targets; do
     COVERED="$COVERED$target "
     if [[ ! -f "$sample" ]]; then
-      if [[ -z "$FFMPEG" && $name != sample.md && $name != sample.txt && $name != script.ts && $name != sample.pdf && $STRICT -eq 0 ]]; then
+      if [[ -z "$FFMPEG" && "$NEEDS_FFMPEG" == *" $name "* && $STRICT -eq 0 ]]; then
         skip "$target" "$name" "ffmpeg not installed"
       else
-        fail "$target" "$name" "sample couldn't be created (see $OUT/pdf-sample/output.log)"
+        fail "$target" "$name" "sample couldn't be created (see the logs in $OUT)"
       fi
       continue
     fi
@@ -260,6 +292,33 @@ for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt scri
       run_conversion "$target" "$target" "$sample"
     fi
   done
+done
+
+# --- Fonts ----------------------------------------------------------------------------
+# Every converted font starts with the bytes of the format that was asked for. A collection
+# becomes a folder with one font per file.
+
+font_check() {  # font_check <sample> <target> <first bytes as hex>…
+  local sample="$1" target="$2" dir="$RUNS/$1-$2" label="$2:bytes" bad="" count=0 f head
+  shift 2
+  [[ -d "$dir" ]] || return 0   # the conversion itself already failed or was skipped above
+  while IFS= read -r f; do
+    count=$((count + 1))
+    head="$(head -c 4 "$f" | xxd -p)"
+    [[ " $* " == *" $head "* ]] || bad="$bad $(basename "$f")=$head"
+  done < <(find "$dir" -type f -size +0 ! -name output.log ! -path "$dir/$sample")
+  if [[ -n "$bad" ]]; then
+    fail "$label" "$sample" "not the format asked for:$bad"
+  elif [[ $sample == sample.ttc && $count -lt 2 ]]; then
+    fail "$label" "$sample" "a collection should become several fonts, got $count"
+  elif [[ $count -gt 0 ]]; then
+    pass "$label" "$sample" "$count file(s) start with $*"
+  fi
+}
+for sample in sample.ttf sample.ttc sample.woff sample.woff2; do
+  font_check "$sample" font-woff2 774f4632                 # wOF2
+  font_check "$sample" font-woff 774f4646                  # wOFF
+  font_check "$sample" font-desktop 00010000 4f54544f 74727565   # TrueType, OTTO, true
 done
 
 # --- Document → PDF --------------------------------------------------------------------
@@ -291,7 +350,7 @@ paper_check "pdf-doc:letter" '{"paperA4": false}' "612 792"
 # One conversion of every kind.
 
 RO="$OUT/read-only" FALLBACK="$OUT/fallback"
-RO_CASES="sample.png:jpg sample.wav:mp3 sample.mp4:gif sample.md:pdf-doc sample.txt:docx sample.pdf:pdf-png sample.pdf:pdf-txt sample.pdf:pdf-docx"
+RO_CASES="sample.png:jpg sample.wav:mp3 sample.mp4:gif sample.md:pdf-doc sample.txt:docx sample.pdf:pdf-png sample.pdf:pdf-txt sample.pdf:pdf-docx sample.ttf:font-woff2"
 mkdir -p "$RO" "$FALLBACK"
 for pair in $RO_CASES; do
   [[ -f "$SAMPLES/${pair%%:*}" ]] && cp "$SAMPLES/${pair%%:*}" "$RO/"
@@ -300,7 +359,7 @@ chmod a-w "$RO"
 for pair in $RO_CASES; do
   name="${pair%%:*}" target="${pair##*:}" label="read-only:${pair##*:}"
   if [[ ! -f "$RO/$name" ]]; then
-    if [[ -z "$FFMPEG" && $name != sample.md && $name != sample.txt && $name != sample.pdf && $STRICT -eq 0 ]]; then
+    if [[ -z "$FFMPEG" && "$NEEDS_FFMPEG" == *" $name "* && $STRICT -eq 0 ]]; then
       skip "$label" "$name" "ffmpeg not installed"
     else
       fail "$label" "$name" "sample couldn't be created"

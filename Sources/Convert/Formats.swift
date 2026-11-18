@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 // MARK: - Input kinds
 
 enum MediaKind: String, CaseIterable {
-    case audio, video, image, pdf, document
+    case audio, video, image, pdf, document, font
 
     /// The kind of file this is, going by its name (see `FileTypes` for the list), and by its
     /// contents where the name is ambiguous: `.ts` is a video transport stream, or TypeScript.
@@ -27,6 +27,7 @@ enum MediaKind: String, CaseIterable {
         case .image: [.image]
         case .pdf: [.pdfPages]
         case .document: [.document]
+        case .font: [.font]
         }
     }
 
@@ -37,6 +38,7 @@ enum MediaKind: String, CaseIterable {
         case .image: "photo"
         case .pdf: "doc.richtext"
         case .document: "doc.text"
+        case .font: "textformat"
         }
     }
 
@@ -47,6 +49,7 @@ enum MediaKind: String, CaseIterable {
         case .image: "Image"
         case .pdf: "PDF"
         case .document: "Document"
+        case .font: "Font"
         }
     }
 }
@@ -57,12 +60,20 @@ enum MediaKind: String, CaseIterable {
 /// sends exactly these types, and a test checks that Resources/Info.plist declares the same ones.
 enum FileTypes {
     /// Content type identifiers by kind, in the order detection tries them
-    /// (PDF and images before the broader audio/video types, documents last).
+    /// (PDF and images before the broader audio/video types, documents last). macOS has no type
+    /// for WOFF2; the app bundle declares `org.w3c.woff2` itself.
     static let accepted: [(kind: MediaKind, identifiers: [String])] = [
         (.pdf, ["com.adobe.pdf"]),
         (.image, ["public.image"]),
         (.audio, ["public.audio"]),
         (.video, ["public.movie", "public.audiovisual-content"]),
+        (
+            .font,
+            [
+                "public.truetype-ttf-font", "public.opentype-font", "public.truetype-collection-font",
+                "public.opentype-collection-font", "org.w3c.woff", "org.w3c.woff2",
+            ]
+        ),
         (
             .document,
             [
@@ -78,6 +89,7 @@ enum FileTypes {
         (.video, ["mkv", "webm", "avi", "flv", "wmv", "ts", "mts", "m2ts", "3gp", "ogv", "mxf", "vob"]),
         (.audio, ["mka", "opus", "ape", "wv", "tta", "dsf", "dff", "ac3", "dts", "amr", "mp2", "caf"]),
         (.document, ["md", "markdown"]),
+        (.font, ["woff2"]),
     ]
 
     /// Every accepted content type identifier: what the Quick Action and the app bundle declare.
@@ -97,6 +109,7 @@ enum OutGroup: String, CaseIterable {
     case image = "Image"
     case document = "Document"
     case pdfPages = "From PDF"
+    case font = "Font"
 }
 
 struct Target: Identifiable, Hashable {
@@ -177,6 +190,14 @@ enum Targets {
                     ("pdf-rtf", "Rich Text (RTF, text only)", "rtf"),
                     ("pdf-txt", "Plain Text", "txt"),
                 ])
+            + t(
+                .font,
+                [
+                    ("font-woff2", "WOFF2 (web font)", "woff2"),
+                    ("font-woff", "WOFF (web font)", "woff"),
+                    // .ttf or .otf, whichever the font inside is.
+                    ("font-desktop", "TTF / OTF (desktop font)", "ttf"),
+                ])
     }()
 
     static func byID(_ id: String) -> Target? { all.first { $0.id == id } }
@@ -198,6 +219,7 @@ enum Targets {
         case .image: order = ["jpg", "png"]
         case .pdf: order = ["pdf-png"]
         case .document: order = ["pdf-doc", "docx"]
+        case .font: order = ["font-woff2", "font-desktop"]
         default: order = []
         }
         for id in order {
@@ -252,7 +274,7 @@ extension Target {
     var isPDFText: Bool { ["pdf-txt", "pdf-docx", "pdf-odt", "pdf-rtf"].contains(id) }
 
     /// Whether the panel has anything to show under "Advanced" for this format.
-    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && !isPDFText }
+    var hasSettings: Bool { !(group == .document && id != "pdf-doc") && !isPDFText && group != .font }
 }
 
 struct ConvSettings: Codable, Equatable {
