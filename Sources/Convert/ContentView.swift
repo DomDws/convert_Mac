@@ -97,7 +97,7 @@ struct ContentView: View {
         var parts: [String] = []
         if model.files.count == 1 {
             let f = model.files[0]
-            if let k = MediaKind.of(f) { parts.append(k.noun) }
+            if let k = model.primaryKind { parts.append(k.noun) }
             if let size = try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
             }

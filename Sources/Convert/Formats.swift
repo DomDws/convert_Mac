@@ -6,9 +6,15 @@ import UniformTypeIdentifiers
 enum MediaKind: String, CaseIterable {
     case audio, video, image, pdf, document
 
-    /// The kind of file this is, going by its name. See `FileTypes` for the list this reads.
+    /// The kind of file this is, going by its name (see `FileTypes` for the list), and by its
+    /// contents where the name is ambiguous: `.ts` is a video transport stream, or TypeScript.
     static func of(_ url: URL) -> MediaKind? {
         let ext = url.pathExtension.lowercased()
+        if ext == "ts", let head = Sniff.header(of: url), !head.isEmpty,
+            !Sniff.isTransportStream(head), Sniff.looksLikeText(head)
+        {
+            return .document
+        }
         if let extra = FileTypes.extraExtensions.first(where: { $0.exts.contains(ext) }) { return extra.kind }
         guard let type = UTType(filenameExtension: ext) else { return nil }
         return FileTypes.contentTypes.first { $0.types.contains { type.conforms(to: $0) } }?.kind

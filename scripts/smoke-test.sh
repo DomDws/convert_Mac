@@ -170,6 +170,16 @@ print("hello")
 ```
 EOF
 
+# A TypeScript file: .ts is also the extension of MPEG transport streams (stream.ts below),
+# so the app has to look inside to tell them apart.
+cat >"$SAMPLES/script.ts" <<'EOF'
+export function greet(name: string): string {
+  return `Hello, ${name}!`;
+}
+
+console.log(greet("smoke test"));
+EOF
+
 cat >"$SAMPLES/sample.txt" <<'EOF'
 Smoke test
 
@@ -194,6 +204,9 @@ if [[ -n "$FFMPEG" ]]; then
   ff -f lavfi -i "testsrc2=size=320x240:rate=30:duration=2" -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=2" \
     -c:v mpeg4 -q:v 5 -pix_fmt yuv420p -c:a aac -shortest "$SAMPLES/sample.mp4"
   ff -f lavfi -i "testsrc2=size=320x240" -frames:v 1 "$SAMPLES/sample.png"
+  # A real MPEG transport stream, the other meaning of .ts.
+  ff -f lavfi -i "testsrc2=size=320x240:rate=30:duration=2" -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=2" \
+    -c:v mpeg2video -q:v 5 -pix_fmt yuv420p -c:a mp2 -shortest -f mpegts "$SAMPLES/stream.ts"
 elif [[ -f "$SAMPLES/sample.pdf" ]]; then
   sips -s format png "$SAMPLES/sample.pdf" --out "$SAMPLES/sample.png" >/dev/null
 fi
@@ -211,20 +224,33 @@ fi
 
 # --- Conversions ----------------------------------------------------------------------
 
-for name in sample.mp4 sample.wav sample.png sample.md sample.txt sample.pdf; do
+for name in sample.mp4 stream.ts sample.wav sample.png sample.md sample.txt script.ts sample.pdf; do
   sample="$SAMPLES/$name"
-  # Ask the app which formats it offers for this kind of file (same logic as the window).
-  probe="$OUT/probe/$name"
-  mkdir -p "$OUT/probe" && : >"$probe"
+  # Ask the app which formats it offers for this file (same logic as the window). It may look
+  # inside the file, so ask about the sample itself; an empty stand-in is only for a sample
+  # that couldn't be generated.
+  probe="$sample"
+  if [[ ! -f "$sample" ]]; then
+    probe="$OUT/probe/$name"
+    mkdir -p "$OUT/probe" && : >"$probe"
+  fi
   targets="$("$BIN" --cli --targets "$probe")" || {
     fail "-" "$name" "app doesn't recognise this file type: $targets"
     continue
   }
+  targets="$(echo $targets)"   # one line, single spaces
+
+  # The two .ts files must be told apart by their contents.
+  if [[ $name == script.ts && " $targets " != *" pdf-doc "* ]]; then
+    fail "-" "$name" "a TypeScript file should be offered document formats, got: $targets"
+  elif [[ $name == stream.ts && -f "$sample" && " $targets " != *" mp4-h264 "* ]]; then
+    fail "-" "$name" "a transport stream should be offered video formats, got: $targets"
+  fi
 
   for target in $targets; do
     COVERED="$COVERED$target "
     if [[ ! -f "$sample" ]]; then
-      if [[ -z "$FFMPEG" && $name != sample.md && $name != sample.txt && $name != sample.pdf && $STRICT -eq 0 ]]; then
+      if [[ -z "$FFMPEG" && $name != sample.md && $name != sample.txt && $name != script.ts && $name != sample.pdf && $STRICT -eq 0 ]]; then
         skip "$target" "$name" "ffmpeg not installed"
       else
         fail "$target" "$name" "sample couldn't be created (see $OUT/pdf-sample/output.log)"

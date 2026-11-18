@@ -162,7 +162,7 @@ scripts/check.sh smoke           # rebuild the release app, then run the convers
 scripts/check.sh site            # syntax-check site/api/*.mjs (needs node)
 ```
 
-The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text and a PDF) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off.
+The **smoke test** (`scripts/smoke-test.sh`) generates small sample files (a hi-res WAV, a short video with sound, a PNG, Markdown, plain text, a PDF, and two `.ts` files: TypeScript source and an MPEG transport stream) and converts each one to every format the app offers for it. Any failed conversion fails the run and is listed by format ID. It needs `brew install ffmpeg webp`; without them, the formats that need them are skipped locally (CI treats that as a failure). Formats with hardware encoding (H.264, HEVC, ProRes, MKV) are also tested with it off.
 
 You need Xcode 26.6 or its Command Line Tools: CI uses that version, and its `swift-format` (6.3) decides the formatting. With only the Command Line Tools, `build` and `smoke` use a native release build, since the universal app needs Xcode; CI builds and tests the universal app.
 

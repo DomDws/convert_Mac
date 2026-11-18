@@ -6,6 +6,8 @@ enum Converter {
         _ input: URL, to t: Target, settings s: ConvSettings, runner: Runner,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> [URL] {
+        // A file whose contents don't match its name gets told so, instead of a vague decode error.
+        if let kind = MediaKind.of(input) { try Sniff.verify(input, as: kind) }
         switch t.group {
         case .audio, .video:
             guard let ff = Tools.ffmpeg else {

@@ -30,7 +30,9 @@ final class ConvertModel: ObservableObject {
         loadSettings()
     }
 
-    var kinds: Set<MediaKind> { Set(files.compactMap(MediaKind.of)) }
+    /// What each file is, decided once when it's added (telling can mean opening the file).
+    private var kindOf: [URL: MediaKind] = [:]
+    var kinds: Set<MediaKind> { Set(files.compactMap { kindOf[$0] }) }
     var groups: [(OutGroup, [Target])] { Targets.groups(for: kinds) }
     var target: Target? { Targets.byID(targetID) }
     var primaryKind: MediaKind? { kinds.count == 1 ? kinds.first : nil }
@@ -40,7 +42,12 @@ final class ConvertModel: ObservableObject {
         guard phase != .running else { return }
         if phase == .done { reset() }
         for u in urls where !files.contains(u) {
-            if MediaKind.of(u) != nil { files.append(u) } else { skipped += 1 }
+            if let kind = MediaKind.of(u) {
+                kindOf[u] = kind
+                files.append(u)
+            } else {
+                skipped += 1
+            }
         }
         chooseTarget()
     }
