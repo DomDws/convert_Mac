@@ -159,7 +159,7 @@ public partial class MainWindow : Window
     {
         ResultLines.Children.Clear();
         if (vm.Converted > 0)
-            ResultLines.Children.Add(ResultLine("",$"Converted {vm.Converted} {(vm.Converted == 1 ? "file" : "files")}", "SystemFillColorSuccessBrush"));
+            ResultLines.Children.Add(ResultLine("", $"Converted {vm.Converted} {(vm.Converted == 1 ? "file" : "files")}", "SystemFillColorSuccessBrush"));
         if (vm.Trashed > 0)
             ResultLines.Children.Add(ResultLine("", vm.Trashed == 1 ? "Moved the original to the Recycle Bin" : $"Moved {vm.Trashed} originals to the Recycle Bin",
                                                 "TextFillColorSecondaryBrush", small: true));
@@ -176,8 +176,15 @@ public partial class MainWindow : Window
         icon.SetResourceReference(TextBlock.ForegroundProperty, brush);
         var label = new TextBox
         {
-            Text = text, IsReadOnly = true, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(0),
-            TextWrapping = TextWrapping.Wrap, FontSize = small ? 12 : 14, MinHeight = 0, Focusable = true,
+            Text = text,
+            IsReadOnly = true,
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Padding = new Thickness(0),
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = small ? 12 : 14,
+            MinHeight = 0,
+            Focusable = true,
         };
         if (small) label.SetResourceReference(ForegroundProperty, brush == "SystemFillColorCriticalBrush" ? brush : "TextFillColorSecondaryBrush");
         var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };

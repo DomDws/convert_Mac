@@ -12,24 +12,24 @@ public static class Converter
         {
             case OutGroup.Audio:
             case OutGroup.Video:
-            {
-                var ff = Tools.FFmpeg ?? throw new ConvertException("ffmpeg isn't installed. Install it with: winget install Gyan.FFmpeg");
-                var p = await Task.Run(() => FF.ProbeFile(input));
-                if (p.Ok && t.Group == OutGroup.Audio && !p.HasAudio) throw new ConvertException("This file has no audio track");
-                if (p.Ok && t.Group == OutGroup.Video && !p.HasVideo) throw new ConvertException("This file has no video track");
-                var codec = t.Group == OutGroup.Audio ? FF.AudioArgs(t, s, p) : await Task.Run(() => FF.VideoArgs(t, s, p));
-                var out_ = Paths.UniqueOutput(input, t.Ext);
-                try
                 {
-                    await runner.RunAsync(ff, [.. FF.Common, "-i", input, .. codec, out_], p.Duration, progress);
+                    var ff = Tools.FFmpeg ?? throw new ConvertException("ffmpeg isn't installed. Install it with: winget install Gyan.FFmpeg");
+                    var p = await Task.Run(() => FF.ProbeFile(input));
+                    if (p.Ok && t.Group == OutGroup.Audio && !p.HasAudio) throw new ConvertException("This file has no audio track");
+                    if (p.Ok && t.Group == OutGroup.Video && !p.HasVideo) throw new ConvertException("This file has no video track");
+                    var codec = t.Group == OutGroup.Audio ? FF.AudioArgs(t, s, p) : await Task.Run(() => FF.VideoArgs(t, s, p));
+                    var out_ = Paths.UniqueOutput(input, t.Ext);
+                    try
+                    {
+                        await runner.RunAsync(ff, [.. FF.Common, "-i", input, .. codec, out_], p.Duration, progress);
+                    }
+                    catch
+                    {
+                        Paths.TryDelete(out_);
+                        throw;
+                    }
+                    return [out_];
                 }
-                catch
-                {
-                    Paths.TryDelete(out_);
-                    throw;
-                }
-                return [out_];
-            }
             case OutGroup.Image:
                 return [await Task.Run(() => ImageConv.Convert(input, t, s))];
             case OutGroup.Document:

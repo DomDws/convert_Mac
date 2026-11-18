@@ -52,8 +52,15 @@ internal static class SettingsBuilder
         {
             var sl = new Slider
             {
-                Minimum = min, Maximum = max, Value = current, Width = 200, VerticalAlignment = VerticalAlignment.Center,
-                SmallChange = step, LargeChange = step * 2, TickFrequency = step, IsSnapToTickEnabled = step > 0.01,
+                Minimum = min,
+                Maximum = max,
+                Value = current,
+                Width = 200,
+                VerticalAlignment = VerticalAlignment.Center,
+                SmallChange = step,
+                LargeChange = step * 2,
+                TickFrequency = step,
+                IsSnapToTickEnabled = step > 0.01,
             };
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
             TextBlock Caption(string text)

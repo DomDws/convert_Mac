@@ -66,7 +66,8 @@ public static class FF
             case "m4a": a.AddRange(["-c:a", "aac", "-b:a", $"{br}k"]); break;
             case "he-aac": a.AddRange(["-c:a", "libfdk_aac", "-profile:a", "aac_he", "-b:a", $"{br}k"]); break;
             case "opus": a.AddRange(["-c:a", "libopus", "-b:a", $"{br}k"]); break;
-            case "ogg": a.AddRange(Tools.HasEncoder("libvorbis")
+            case "ogg":
+                a.AddRange(Tools.HasEncoder("libvorbis")
                         ? ["-c:a", "libvorbis", "-q:a", VorbisQuality(br)]
                         : ["-c:a", "vorbis", "-strict", "experimental", "-ac", "2", "-q:a", VorbisQuality(br)]); break;
             case "wma": a.AddRange(["-c:a", "wmav2", "-b:a", $"{br}k"]); break;

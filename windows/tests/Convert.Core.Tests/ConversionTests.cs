@@ -34,8 +34,17 @@ public sealed class ConversionTests : IDisposable
     public void FFmpegIsFound() => Assert.NotNull(Tools.FFmpeg);
 
     [Theory]
-    [InlineData("mp3")] [InlineData("m4a")] [InlineData("flac")] [InlineData("opus")] [InlineData("ogg")]
-    [InlineData("wma")] [InlineData("ac3")] [InlineData("wv")] [InlineData("mp2")] [InlineData("alac")] [InlineData("aiff")]
+    [InlineData("mp3")]
+    [InlineData("m4a")]
+    [InlineData("flac")]
+    [InlineData("opus")]
+    [InlineData("ogg")]
+    [InlineData("wma")]
+    [InlineData("ac3")]
+    [InlineData("wv")]
+    [InlineData("mp2")]
+    [InlineData("alac")]
+    [InlineData("aiff")]
     public async Task AudioTargets(string id)
     {
         var out_ = (await Run(Audio(), id)).Single();
@@ -45,7 +54,12 @@ public sealed class ConversionTests : IDisposable
     }
 
     [Theory]
-    [InlineData("mp4-h264")] [InlineData("mkv")] [InlineData("webm")] [InlineData("mov-prores")] [InlineData("gif")] [InlineData("mp4-av1")]
+    [InlineData("mp4-h264")]
+    [InlineData("mkv")]
+    [InlineData("webm")]
+    [InlineData("mov-prores")]
+    [InlineData("gif")]
+    [InlineData("mp4-av1")]
     public async Task VideoTargets(string id)
     {
         var out_ = (await Run(Video(), id)).Single();
@@ -86,8 +100,15 @@ public sealed class ConversionTests : IDisposable
     }
 
     [Theory]
-    [InlineData("jpg")] [InlineData("png")] [InlineData("webp")] [InlineData("avif")] [InlineData("heic")]
-    [InlineData("tiff")] [InlineData("gif-img")] [InlineData("bmp")] [InlineData("pdf-img")]
+    [InlineData("jpg")]
+    [InlineData("png")]
+    [InlineData("webp")]
+    [InlineData("avif")]
+    [InlineData("heic")]
+    [InlineData("tiff")]
+    [InlineData("gif-img")]
+    [InlineData("bmp")]
+    [InlineData("pdf-img")]
     public async Task ImageTargets(string id)
     {
         if (Targets.ById(id) == null) return;   // not writable with this Magick build

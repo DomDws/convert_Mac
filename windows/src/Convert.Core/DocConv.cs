@@ -46,38 +46,38 @@ public static partial class DocConv
             switch (t.Id)
             {
                 case "pdf-doc" when src != Src.Office:
-                {
-                    var html = Path.Combine(tmp, "doc.html");
-                    File.WriteAllText(html, PrintableHtml(input, src, s.PaperA4), Encoding.UTF8);
-                    var out_ = Paths.UniqueOutput(input, "pdf");
-                    await PrintToPdfAsync(html, out_, s.PaperA4);
-                    return out_;
-                }
-                case "html" when src is Src.Markdown or Src.Text or Src.Html:
-                {
-                    var out_ = Paths.UniqueOutput(input, "html");
-                    if (src == Src.Html) File.Copy(input, out_);
-                    else File.WriteAllText(out_, StandaloneHtml(input, src, paper: null), Encoding.UTF8);
-                    return out_;
-                }
-                case "txt" when src is Src.Markdown or Src.Text:
-                {
-                    var out_ = Paths.UniqueOutput(input, "txt");
-                    if (src == Src.Text) File.Copy(input, out_);
-                    else File.WriteAllText(out_, Markdown.ToPlainText(File.ReadAllText(input), Pipeline).Trim() + "\n", Encoding.UTF8);
-                    return out_;
-                }
-                default:
-                {
-                    // LibreOffice. Markdown goes in as rendered HTML so headings, lists and tables survive.
-                    var feed = input;
-                    if (src == Src.Markdown)
                     {
-                        feed = Path.Combine(tmp, Path.GetFileNameWithoutExtension(input) + ".html");
-                        File.WriteAllText(feed, StandaloneHtml(input, src, paper: null), Encoding.UTF8);
+                        var html = Path.Combine(tmp, "doc.html");
+                        File.WriteAllText(html, PrintableHtml(input, src, s.PaperA4), Encoding.UTF8);
+                        var out_ = Paths.UniqueOutput(input, "pdf");
+                        await PrintToPdfAsync(html, out_, s.PaperA4);
+                        return out_;
                     }
-                    return await LibreOfficeAsync(feed, SourceOf(feed), t, input, tmp);
-                }
+                case "html" when src is Src.Markdown or Src.Text or Src.Html:
+                    {
+                        var out_ = Paths.UniqueOutput(input, "html");
+                        if (src == Src.Html) File.Copy(input, out_);
+                        else File.WriteAllText(out_, StandaloneHtml(input, src, paper: null), Encoding.UTF8);
+                        return out_;
+                    }
+                case "txt" when src is Src.Markdown or Src.Text:
+                    {
+                        var out_ = Paths.UniqueOutput(input, "txt");
+                        if (src == Src.Text) File.Copy(input, out_);
+                        else File.WriteAllText(out_, Markdown.ToPlainText(File.ReadAllText(input), Pipeline).Trim() + "\n", Encoding.UTF8);
+                        return out_;
+                    }
+                default:
+                    {
+                        // LibreOffice. Markdown goes in as rendered HTML so headings, lists and tables survive.
+                        var feed = input;
+                        if (src == Src.Markdown)
+                        {
+                            feed = Path.Combine(tmp, Path.GetFileNameWithoutExtension(input) + ".html");
+                            File.WriteAllText(feed, StandaloneHtml(input, src, paper: null), Encoding.UTF8);
+                        }
+                        return await LibreOfficeAsync(feed, SourceOf(feed), t, input, tmp);
+                    }
             }
         }
         finally
@@ -198,7 +198,8 @@ public static partial class DocConv
                 }
             });
             Dispatcher.Run();
-        }) { IsBackground = true, Name = "Convert PDF printer" };
+        })
+        { IsBackground = true, Name = "Convert PDF printer" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return done.Task;
