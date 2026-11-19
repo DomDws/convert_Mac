@@ -5,6 +5,17 @@ namespace Convert.Core;
 public static class FileOps
 {
     /// <summary>
+    /// Whether an original may go to the Recycle Bin (which keeps it recoverable): only once its
+    /// finished, separate output sits next to it. Never after Stop, and never when the output had to
+    /// be saved somewhere else, so the original and its conversion don't end up in different places.
+    /// </summary>
+    public static bool MayRecycle(string original, IReadOnlyCollection<string> outputs, bool stopped) =>
+        !stopped && outputs.Count > 0
+        && !outputs.Contains(original, StringComparer.OrdinalIgnoreCase)
+        && outputs.All(o => File.Exists(o) || Directory.Exists(o))
+        && !outputs.Any(o => OutputFolder.IsFallback(o, original));
+
+    /// <summary>
     /// Moves a file to the Recycle Bin, where it can be restored from. Returns false, and leaves the
     /// file where it is, when that isn't possible.
     /// </summary>
