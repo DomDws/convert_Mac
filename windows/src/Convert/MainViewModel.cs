@@ -33,13 +33,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool Stopped { get; private set; }
     public int Trashed { get; private set; }
     public int Converted { get; private set; }
+    /// <summary>True while the running conversion can't say how far along it is (one document → PDF, one font).</summary>
+    public bool Indeterminate { get; private set; }
+    /// <summary>Set when outputs couldn't go next to their originals (read-only folder) and were saved here instead.</summary>
+    public string? SavedElsewhere { get; private set; }
 
     public MainViewModel(IEnumerable<string> files)
     {
         Add(files);
     }
 
-    public IReadOnlySet<MediaKind> Kinds => Files.Select(MediaKinds.Of).OfType<MediaKind>().ToHashSet();
+    /// <summary>What each file is, decided once when it's added (telling can mean opening the file).</summary>
+    private readonly Dictionary<string, MediaKind> kindOf = new(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlySet<MediaKind> Kinds => Files.Select(f => kindOf[f]).ToHashSet();
     public List<(OutGroup Group, List<Target> Targets)> Groups => Targets.Groups(Kinds);
     public List<TargetItem> TargetItems => Groups.SelectMany(g => g.Targets).Select(t => new TargetItem(t)).ToList();
     public bool HasSeveralGroups => Groups.Count > 1;
@@ -106,7 +113,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
             string p;
             try { p = Path.GetFullPath(raw.Trim('"')); } catch (Exception) { Skipped++; continue; }
             if (Files.Contains(p, StringComparer.OrdinalIgnoreCase)) continue;
-            if (File.Exists(p) && MediaKinds.Of(p) != null) Files.Add(p); else Skipped++;
+            if (File.Exists(p) && Sniff.KindOf(p) is { } kind)
+            {
+                kindOf[p] = kind;
+                Files.Add(p);
+            }
+            else Skipped++;
         }
         ChooseTarget();
         ChangedAll();
@@ -117,6 +129,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (Phase != Phase.Idle) return;
         Files.Remove(path);
         ChooseTarget();
+        ChangedAll();
+    }
+
+    /// <summary>
+    /// ffmpeg or LibreOffice may have been installed (or removed) while the window was in the
+    /// background: redraw, so the warning and the formats that depend on them follow.
+    /// </summary>
+    public void ToolsMayHaveChanged()
+    {
+        if (Phase == Phase.Idle) ChooseTarget();
         ChangedAll();
     }
 
@@ -150,7 +172,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var parts = new List<string>();
             if (Files.Count == 1)
             {
-                if (MediaKinds.Of(Files[0]) is { } k) parts.Add(k.Noun());
+                parts.Add(kindOf[Files[0]].Noun());
                 try { parts.Add(FormatSize(new FileInfo(Files[0]).Length)); } catch (IOException) { }
             }
             else
@@ -195,6 +217,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void Reset()
     {
         Phase = Phase.Idle; Outputs.Clear(); Errors.Clear(); Progress = 0; Stopped = false; Trashed = 0; Converted = 0;
+        Indeterminate = false; SavedElsewhere = null;
     }
 
     public async Task StartAsync()
@@ -203,6 +226,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Reset();
         runner.Reset();
         Phase = Phase.Running;
+        // Printing a document to PDF reports no progress, and neither does compressing a font;
+        // with several files the bar still moves once per file.
+        Indeterminate = (t.Id == "pdf-doc" || t.Group == OutGroup.Font) && Files.Count == 1;
         ChangedAll();
         var list = Files.ToList();
         var s = Settings.Copy();
@@ -228,11 +254,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 var made = await Converter.ConvertAsync(file, t, s, runner, ((IProgress<double>)progress).Report);
                 Outputs.AddRange(made);
                 Converted++;
-                // Only after a finished, separate output exists on disk; the Recycle Bin keeps it recoverable.
-                if (trash && !Stopped && made.Count > 0 && !made.Contains(file, StringComparer.OrdinalIgnoreCase)
-                    && made.All(m => File.Exists(m) || Directory.Exists(m)))
+                if (made.FirstOrDefault(m => OutputFolder.IsFallback(m, file)) is { } moved)
+                    SavedElsewhere = Path.GetDirectoryName(moved);
+                if (trash && FileOps.MayRecycle(file, made, Stopped))
                 {
-                    if (FileOps.Recycle(file)) Trashed++;
+                    if (await Task.Run(() => FileOps.Recycle(file))) Trashed++;
                     else Errors.Add($"{Path.GetFileName(file)}: converted, but couldn't move it to the Recycle Bin");
                 }
             }
@@ -243,6 +269,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
         }
         Progress = 1;
+        Indeterminate = false;
         Phase = Phase.Done;
         ChangedAll();
     }

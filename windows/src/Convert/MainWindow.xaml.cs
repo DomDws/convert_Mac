@@ -38,6 +38,13 @@ public partial class MainWindow : Window
         Focus();
     }
 
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        // Coming back from installing ffmpeg or LibreOffice: the warning should be gone without a restart.
+        vm.ToolsMayHaveChanged();
+    }
+
     protected override void OnClosing(CancelEventArgs e)
     {
         vm.Cancel();
@@ -143,7 +150,7 @@ public partial class MainWindow : Window
         if (vm.Phase == Phase.Done) BuildResults();
         Taskbar.ProgressState = vm.Phase switch
         {
-            Phase.Running => TaskbarItemProgressState.Normal,
+            Phase.Running => vm.Indeterminate ? TaskbarItemProgressState.Indeterminate : TaskbarItemProgressState.Normal,
             Phase.Done when vm.Errors.Count > 0 => TaskbarItemProgressState.Error,
             _ => TaskbarItemProgressState.None,
         };
@@ -151,6 +158,7 @@ public partial class MainWindow : Window
 
     private void UpdateProgress()
     {
+        Progress.IsIndeterminate = vm.Indeterminate && vm.Phase == Phase.Running;
         Progress.Value = vm.Progress;
         Taskbar.ProgressValue = vm.Progress;
     }
@@ -160,6 +168,10 @@ public partial class MainWindow : Window
         ResultLines.Children.Clear();
         if (vm.Converted > 0)
             ResultLines.Children.Add(ResultLine("", $"Converted {vm.Converted} {(vm.Converted == 1 ? "file" : "files")}", "SystemFillColorSuccessBrush"));
+        if (vm.SavedElsewhere is { } folder)
+            ResultLines.Children.Add(ResultLine("", $"Saved to {OutputFolder.Name(folder)} because the original's folder is read-only"
+                                                          + (vm.TrashOriginals ? ". The original stays where it is." : ""),
+                                                "TextFillColorSecondaryBrush", small: true));
         if (vm.Trashed > 0)
             ResultLines.Children.Add(ResultLine("", vm.Trashed == 1 ? "Moved the original to the Recycle Bin" : $"Moved {vm.Trashed} originals to the Recycle Bin",
                                                 "TextFillColorSecondaryBrush", small: true));
