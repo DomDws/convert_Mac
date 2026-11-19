@@ -22,7 +22,31 @@ internal static class ShellMenu
     /// <summary>The app's folder, without a trailing backslash.</summary>
     private static string AppDir => Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
 
+    /// <summary>0 when this Convert's entry is in the menu, 1 when it isn't: what <c>--menu-status</c> answers.</summary>
+    public static int Status()
+    {
+        try
+        {
+            var (name, publisher) = Identity(Path.Combine(AppDir, PackageFile));
+            var registered = new PackageManager().FindPackagesForUser("", name, publisher).Any(PointsHere);
+            Console.WriteLine(registered ? "Convert… is in Explorer's right-click menu." : "Convert… is not in Explorer's right-click menu.");
+            return registered ? 0 : 1;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Couldn't tell whether Convert is in Explorer's right-click menu: " + FirstLine(e.Message));
+            return 1;
+        }
+    }
+
     /// <summary>0 when the entry is in the menu, 3 when Windows doesn't trust the package's signature, 1 for anything else.</summary>
+    /// <remarks>
+    /// When an earlier registration is in place, this process belongs to that package, and Windows
+    /// ends a package's processes when it removes the package: the old registration goes, and this
+    /// process with it, before the new one is made. Whoever calls this therefore asks
+    /// <c>--menu-status</c> afterwards and calls again if the answer is no; the second time there is
+    /// no package left to belong to. (The setup program does exactly that.)
+    /// </remarks>
     public static async Task<int> RegisterAsync()
     {
         try
@@ -52,6 +76,9 @@ internal static class ShellMenu
         {
             var msix = Path.Combine(AppDir, PackageFile);
             var (name, publisher) = File.Exists(msix) ? Identity(msix) : ("Convert", null);
+            // First, because this process usually belongs to the package it is about to remove, and
+            // Windows ends it together with the package (see RegisterAsync).
+            StopMenuHosts();
             var removed = await RemoveAsync(new PackageManager(), name, publisher);
             StopMenuHosts();
             Console.WriteLine(removed > 0 ? "Convert… is no longer in Explorer's right-click menu." : "Convert wasn't in Explorer's right-click menu.");

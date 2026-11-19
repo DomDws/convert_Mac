@@ -136,6 +136,38 @@ begin
     Result := InstallDesktopRuntime;
 end;
 
+{ Adds "Convert…" to Explorer's menu and makes sure it is really there. Returns 0 when it is,
+  otherwise what Convert.exe --register-menu answered (3: Windows doesn't trust the signature).
+
+  When an earlier registration is still in place (a Convert put there by build.ps1 -Install, say),
+  the first call removes it, and Windows ends that very call along with the old registration. So the
+  answer of --register-menu alone can't be trusted: --menu-status is asked, and the registration is
+  tried again when the entry isn't there. }
+function RegisterMenu: Integer;
+var
+  Attempt, Answer, Status: Integer;
+  Convert: String;
+begin
+  Convert := ExpandConstant('{app}\Convert.exe');
+  Answer := -1;
+  for Attempt := 1 to 3 do
+  begin
+    if not Exec(Convert, '--register-menu', '', SW_HIDE, ewWaitUntilTerminated, Answer) then
+      Answer := -1;
+    if Exec(Convert, '--menu-status', '', SW_HIDE, ewWaitUntilTerminated, Status) and (Status = 0) then
+    begin
+      Log('Menu entry registered at attempt ' + IntToStr(Attempt));
+      Result := 0;
+      Exit;
+    end;
+    Log('Menu entry not registered after attempt ' + IntToStr(Attempt) + ' (answer ' + IntToStr(Answer) + ')');
+    { The first attempt may have been cut short (see above). After that, 1 and 3 are Convert's own
+      answers, and a refusal is a refusal. }
+    if (Attempt > 1) and ((Answer = 1) or (Answer = 3)) then Break;
+  end;
+  if (Answer = 1) or (Answer = 3) then Result := Answer else Result := 1;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
@@ -143,8 +175,7 @@ var
 begin
   if CurStep <> ssPostInstall then Exit;
   Shortcut := ExpandConstant('{userprograms}\Convert.lnk');
-  if not Exec(ExpandConstant('{app}\Convert.exe'), '--register-menu', '', SW_HIDE, ewWaitUntilTerminated, Code) then
-    Code := -1;
+  Code := RegisterMenu;
   if Code = 0 then
   begin
     { Registered, Convert is in the Start menu by itself. }
