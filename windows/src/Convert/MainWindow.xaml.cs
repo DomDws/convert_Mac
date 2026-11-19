@@ -24,6 +24,7 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(MainViewModel.Progress)) UpdateProgress();
             else Refresh();
+            if (closeWhenStopped && vm.Phase != Phase.Running) Close();
         };
         Refresh();
     }
@@ -45,9 +46,20 @@ public partial class MainWindow : Window
         vm.ToolsMayHaveChanged();
     }
 
+    private bool closeWhenStopped;
+
     protected override void OnClosing(CancelEventArgs e)
     {
-        vm.Cancel();
+        // Closing the window while a file is converting means Stop. The app must not exit before the
+        // half-written output has been removed, so the window only hides, and closes once that's done.
+        if (vm.Phase == Phase.Running)
+        {
+            e.Cancel = true;
+            closeWhenStopped = true;
+            vm.Cancel();
+            Hide();
+            return;
+        }
         base.OnClosing(e);
     }
 
