@@ -195,7 +195,8 @@ public sealed class FontSystemTests(ITestOutputHelper output) : IDisposable
     {
         var font = SystemFonts.Pick("simsunb.ttf", "malgun.ttf", "msyh.ttc")!;
         await StopDuring(font, "font-woff2", 300, 1000, 2500);
-        await StopDuring(font, "font-woff", 300, 1000);
+        // Over in a second or two on a fast PC.
+        await StopDuring(font, "font-woff", 300);
     }
 
     private async Task StopDuring(string font, string id, params int[] delays)
