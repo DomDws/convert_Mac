@@ -1,0 +1,119 @@
+# Builds the Windows setup program (windows\build.ps1 -Setup), installs it on the runner and runs the
+# smoke test against the installed app, then keeps the setup program as an artifact for a release.
+#
+# The setup program built here is unsigned: there is no code-signing certificate yet. It installs
+# Convert, but Windows refuses to add the right-click menu entry of an unsigned package, so people
+# open Convert from the Start menu and drop files on its window (see windows/README.md).
+name: Windows setup
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/windows-setup.yml', 'windows/build.ps1', 'windows/installer/**']
+  workflow_dispatch:
+
+concurrency:
+  group: windows-setup-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # The same pins as windows.yml: bump them together.
+  DOTNET_SDK_VERSION: 10.0.404
+  DOTNET_MULTILEVEL_LOOKUP: 0
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  # The installer builder. The checksum is the one GitHub lists for the release asset
+  # (github.com/jrsoftware/issrc, tag is-6_7_3).
+  INNO_SETUP_VERSION: 6.7.3
+  INNO_SETUP_SHA256: 9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  setup:
+    name: windows-setup
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          skip-lts-prepass: true
+        env:
+          # Not next to the runner's preinstalled SDKs, where a newer one would win over the pin.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
+      - name: Install Inno Setup
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          $tag = "is-" + $env:INNO_SETUP_VERSION.Replace(".", "_")
+          $exe = Join-Path $env:RUNNER_TEMP "innosetup-$env:INNO_SETUP_VERSION.exe"
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$env:INNO_SETUP_VERSION.exe" -OutFile $exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:INNO_SETUP_SHA256) { throw "innosetup-$env:INNO_SETUP_VERSION.exe has SHA-256 $hash, expected $env:INNO_SETUP_SHA256" }
+          # For this user only, where build.ps1 looks first; it replaces nothing the image came with.
+          $p = Start-Process $exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER" -Wait -PassThru
+          if ($p.ExitCode) { throw "The Inno Setup installer ended with code $($p.ExitCode)" }
+          Remove-Item $exe
+          $iscc = Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe isn't at $iscc after installing Inno Setup" }
+      - name: Build the setup program
+        run: |
+          windows\build.ps1 -Setup
+          $setup = Get-ChildItem windows\out\Convert-*-setup.exe
+          if (@($setup).Count -ne 1) { throw "Expected one setup program in windows\out, found $(@($setup).Count)" }
+          $hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($setup.Name)" | Set-Content (Join-Path $setup.DirectoryName "$($setup.Name).sha256") -Encoding ascii
+          "SETUP=$($setup.FullName)" | Add-Content $env:GITHUB_ENV
+          Write-Host ("{0}: {1:N1} MB, SHA-256 {2}" -f $setup.Name, ($setup.Length / 1MB), $hash)
+      # Nobody should be the first to run a download. If the runner has no .NET Desktop Runtime of the
+      # right version, this also takes the path where the setup program fetches Microsoft's installer.
+      - name: Install it here
+        timeout-minutes: 20
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "setup.log"
+          $p = Start-Process $env:SETUP -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=`"$log`"" -Wait -PassThru
+          if ($p.ExitCode) { Get-Content $log -Tail 60; throw "The setup program ended with code $($p.ExitCode)" }
+          $app = Join-Path $env:LOCALAPPDATA "Programs\Convert\Convert.exe"
+          if (-not (Test-Path $app)) { Get-Content $log -Tail 60; throw "Convert.exe isn't at $app after the setup program ran" }
+          Select-String -Path $log -Pattern "menu|\.NET|dotnet" -SimpleMatch:$false | Select-Object -Last 15 | ForEach-Object { $_.Line }
+      # Without ffmpeg and LibreOffice the smoke test skips (and lists) what needs them; images, PDFs,
+      # fonts and Markdown run with the installed app. windows.yml covers the rest on every change.
+      - name: Smoke test the installed app
+        run: windows\smoke-test.ps1 -Exe "$env:LOCALAPPDATA\Programs\Convert\Convert.exe" -Out "$env:RUNNER_TEMP\smoke"
+      - name: Uninstall it
+        run: |
+          $dir = Join-Path $env:LOCALAPPDATA "Programs\Convert"
+          $unins = Get-ChildItem $dir -Filter "unins*.exe" | Select-Object -First 1
+          if (-not $unins) { throw "No uninstaller in $dir" }
+          $p = Start-Process $unins.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($p.ExitCode) { throw "The uninstaller ended with code $($p.ExitCode)" }
+          # The uninstaller removes what's left of the folder a moment after it exits.
+          for ($i = 0; $i -lt 20 -and (Test-Path (Join-Path $dir "Convert.exe")); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $dir "Convert.exe")) { throw "Convert.exe is still in $dir after uninstalling" }
+      - name: Keep the setup program
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: convert-windows-setup
+          path: |
+            windows/out/Convert-*-setup.exe
+            windows/out/Convert-*-setup.exe.sha256
+          retention-days: 30
+          if-no-files-found: error
+      - name: Upload the setup and smoke test logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-setup-logs
+          path: |
+            ${{ runner.temp }}/setup.log
+            ${{ runner.temp }}/smoke
+          retention-days: 7
+          if-no-files-found: ignore
