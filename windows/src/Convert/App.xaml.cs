@@ -18,13 +18,13 @@ public partial class App : Application
         {
             Cli.Attach();
             foreach (var ext in MediaKinds.AllExtensions) Console.WriteLine(ext);
-            Shutdown(0);
+            AppExit.Now(0);
             return;
         }
         if (args.Length > 0 && args[0] == "--cli")
         {
             Cli.Attach();
-            Cli.RunAsync(args[1..]).ContinueWith(t => Dispatcher.Invoke(() => Shutdown(t.IsFaulted ? 1 : t.Result)));
+            Cli.RunAsync(args[1..]).ContinueWith(t => AppExit.Now(t.IsFaulted ? 1 : t.Result));
             return;
         }
 
@@ -39,6 +39,13 @@ public partial class App : Application
 
         if (files.Any(f => MediaKinds.Of(f) is MediaKind.Video)) HardwareEncoder.Warmup();
         new MainWindow(new MainViewModel(files)).Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        base.OnExit(e);
+        // The last window is closed and no conversion is running (the window waits for that): done.
+        AppExit.Now(e.ApplicationExitCode);
     }
 }
 

@@ -3,11 +3,10 @@ name: Windows
 
 on:
   pull_request:
-    # windows-port: where the port is developed until it's merged into main.
-    branches: [main, windows-port]
+    branches: [main]
     paths: ['windows/**', '.github/workflows/windows.yml']
   push:
-    branches: [main, windows-port]
+    branches: [main]
     paths: ['windows/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 

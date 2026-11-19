@@ -110,6 +110,27 @@ public static class ImageConv
 
     private static readonly object setupGate = new();
     private static bool isSetUp;
+    private static string? configuration;
+
+    /// <summary>Folders of Convert processes that ended without tidying up (a crash, the power going).</summary>
+    private static void RemoveLeftConfigurations(string root)
+    {
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                if (!int.TryParse(Path.GetFileName(dir), out var pid)) continue;
+                try { System.Diagnostics.Process.GetProcessById(pid).Dispose(); }
+                catch (ArgumentException) { Paths.TryDelete(dir); }   // no such process any more
+                catch (InvalidOperationException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Removes the configuration folder <see cref="Setup"/> made for this process.</summary>
+    public static void CleanUp() => Paths.TryDelete(Interlocked.Exchange(ref configuration, null));
 
     /// <summary>
     /// Limits what ImageMagick may do, once, before its first use: no scripting formats, nothing
@@ -127,9 +148,11 @@ public static class ImageConv
             // ImageMagick reads its configuration from files. Each process writes its own, so one
             // Convert window never reads a folder another is in the middle of writing.
             var folder = Path.Combine(Paths.TempRoot, "magick", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            RemoveLeftConfigurations(Path.GetDirectoryName(folder)!);
             Directory.CreateDirectory(folder);
             MagickNET.Initialize(files, folder);
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => Paths.TryDelete(folder);
+            configuration = folder;
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => CleanUp();
 
             // A quarter of the PC's memory for pixels; past that ImageMagick uses a temp file, up to the disk limit.
             ResourceLimits.LimitMemory(new Percentage(25));
