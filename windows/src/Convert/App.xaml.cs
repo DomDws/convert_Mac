@@ -21,6 +21,19 @@ public partial class App : Application
             AppExit.Now(0);
             return;
         }
+        // For the installer: put "Convert…" in Explorer's right-click menu, or take it out.
+        if (args.Length > 0 && args[0] is "--register-menu" or "--unregister-menu" or "--menu-status")
+        {
+            Cli.Attach();
+            var work = args[0] switch
+            {
+                "--register-menu" => ShellMenu.RegisterAsync(),
+                "--unregister-menu" => ShellMenu.UnregisterAsync(),
+                _ => Task.Run(ShellMenu.Status),
+            };
+            work.ContinueWith(t => AppExit.Now(t.IsFaulted ? 1 : t.Result));
+            return;
+        }
         if (args.Length > 0 && args[0] == "--cli")
         {
             Cli.Attach();

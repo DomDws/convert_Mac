@@ -61,6 +61,46 @@ A plain `.\build.ps1` (without `-Install`) builds an unsigned package and create
 Removing the trust entry needs one permission prompt. If you say No, the script tells you what is left
 and how to finish. It always ends with a list of what was removed and what, if anything, is left.
 
+## Making a release
+
+```powershell
+.\build.ps1 -Setup -CertificateThumbprint <thumbprint> -TimestampUrl <your certificate authority's timestamp server>
+```
+
+This builds `out\Convert-<version>-setup.exe` (about 16 MB): one file people download and run. It needs
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`) and a
+code-signing certificate in your personal certificate store; list yours with
+`Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert`. The certificate's subject becomes the package's
+publisher, and the app's own files, the package, the setup program and its uninstaller are all signed
+with it.
+
+What the setup program does on someone's PC:
+
+- It installs for that user only, into `%LOCALAPPDATA%\Programs\Convert`, and never asks for
+  administrator rights itself.
+- The download doesn't contain .NET. If the PC has no .NET 10 Desktop Runtime, the setup program
+  fetches Microsoft's installer for it (about 57 MB, the version and SHA-256 pinned in `build.ps1`),
+  checks it and runs it; that installer asks for permission once. Bump the pin with each release.
+- It runs `Convert.exe --register-menu`, which adds **Convert…** to Explorer's right-click menu. If
+  Windows refuses (it only accepts a package whose signature it trusts), Convert is still installed and
+  gets a Start menu shortcut, and the setup program says what happened.
+- Running a newer setup program over an installed Convert updates it. Uninstalling from
+  **Settings → Apps** takes the menu entry out, removes the program and asks whether to remove the
+  settings too.
+
+To try the setup program before you have a certificate:
+
+```powershell
+.\build.ps1 -Setup -TestSign   # signs like -Install does and asks once (UAC) to trust that certificate here
+.\out\Convert-0.4.0-setup.exe
+```
+
+A setup program made with `-TestSign` only works on the PC that built it. `.\uninstall.ps1` removes a
+Convert installed either way, and the test certificate's trust entry.
+
+Even with a real certificate, Windows SmartScreen warns about a download from a publisher it hasn't
+seen often yet; that goes away as more people install it.
+
 ## Privacy
 
 Convert has no network code, no analytics and no update check. It reads the files you give it and
@@ -122,8 +162,9 @@ aren't read.
 
 **Windows-only limitations**
 
-- The context-menu entry needs the .NET 10 runtime installed. A self-contained release would need that
-  part rewritten as a native DLL.
+- Convert needs the .NET 10 Desktop Runtime on the PC; the setup program installs it when it's missing.
+  Shipping .NET inside Convert instead would make the download about 90 MB and need the context-menu
+  entry rewritten as a native DLL.
 - HTML or Markdown converted to HTML out of a read-only folder ends up in Downloads, away from the
   pictures it refers to by relative path.
 - Administrators can override the startup options of the WebView2 runtime (which prints documents to
