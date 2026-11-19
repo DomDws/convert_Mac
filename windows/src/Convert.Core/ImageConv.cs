@@ -139,6 +139,8 @@ public static class ImageConv
             ResourceLimits.Width = 100_000;
             ResourceLimits.Height = 100_000;
             ResourceLimits.ListLength = 64;
+            // Resizing a picture doesn't need the graphics driver, and a driver is one more thing that can go wrong.
+            OpenCL.IsEnabled = false;
         }
     }
 
