@@ -31,6 +31,7 @@ public static class PdfConv
 
         var count = (int)doc.PageCount;
         if (count == 0) throw new ConvertException("This PDF has no pages");
+        ImageConv.Setup();
 
         // One page → file next to the PDF. Several → a folder with page 1, page 2, …
         string? folder = null;

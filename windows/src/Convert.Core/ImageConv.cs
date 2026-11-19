@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using ImageMagick;
+using ImageMagick.Configuration;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -20,58 +22,195 @@ public static class ImageConv
         _ => throw new ConvertException($"Unknown image format {id}"),
     };
 
+    private static readonly ConcurrentDictionary<string, bool> writable = new();
+
     public static bool CanWrite(string id)
     {
         // Magick.NET reads HEIC but can't write it; Windows' own HEIF encoder can.
         if (id == "heic") return WindowsHeif.Available;
-        try { return MagickFormatInfo.Create(FormatFor(id))?.SupportsWriting == true; }
-        catch (Exception) { return false; }
+        return writable.GetOrAdd(id, static id =>
+        {
+            Setup();
+            try { return MagickFormatInfo.Create(FormatFor(id))?.SupportsWriting == true; }
+            catch (Exception e) when (e is MagickException or ConvertException) { return false; }
+        });
     }
+
+    // Reading safely
+
+    /// <summary>
+    /// The decoder for each accepted extension. ImageMagick is always told which one to use: left
+    /// to itself it goes by the name and then by the contents, and its list of formats includes ones
+    /// that are really scripts (MSL, MVG) or that fetch things (URL).
+    /// </summary>
+    private static readonly Dictionary<string, MagickFormat> Decoders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["jpg"] = MagickFormat.Jpeg,
+        ["jpeg"] = MagickFormat.Jpeg,
+        ["jpe"] = MagickFormat.Jpeg,
+        ["jfif"] = MagickFormat.Jpeg,
+        ["png"] = MagickFormat.Png,
+        ["gif"] = MagickFormat.Gif,
+        ["bmp"] = MagickFormat.Bmp,
+        ["dib"] = MagickFormat.Dib,
+        ["tif"] = MagickFormat.Tiff,
+        ["tiff"] = MagickFormat.Tiff,
+        ["webp"] = MagickFormat.WebP,
+        ["heic"] = MagickFormat.Heic,
+        ["heif"] = MagickFormat.Heif,
+        ["hif"] = MagickFormat.Heic,
+        ["avif"] = MagickFormat.Avif,
+        ["ico"] = MagickFormat.Ico,
+        ["jxl"] = MagickFormat.Jxl,
+        ["psd"] = MagickFormat.Psd,
+        ["tga"] = MagickFormat.Tga,
+        ["svg"] = MagickFormat.Svg,
+        ["dng"] = MagickFormat.Dng,
+        ["cr2"] = MagickFormat.Cr2,
+        ["cr3"] = MagickFormat.Cr3,
+        ["nef"] = MagickFormat.Nef,
+        ["nrw"] = MagickFormat.Nrw,
+        ["arw"] = MagickFormat.Arw,
+        ["orf"] = MagickFormat.Orf,
+        ["rw2"] = MagickFormat.Rw2,
+        ["raf"] = MagickFormat.Raf,
+        ["pef"] = MagickFormat.Pef,
+        ["srw"] = MagickFormat.Srw,
+        ["erf"] = MagickFormat.Erf,
+        ["3fr"] = MagickFormat.ThreeFr,
+    };
+
+    /// <summary>Whether there's a decoder for this extension (without the dot).</summary>
+    public static bool CanRead(string extension) => Decoders.ContainsKey(extension);
+
+    /// <summary>
+    /// The decoder for a file: the one its contents call for when they're a well-known format
+    /// (a PNG saved as .jpg still converts, as on the Mac), otherwise the one for its extension.
+    /// </summary>
+    private static MagickFormat? DecoderFor(string input, byte[] head)
+    {
+        MagickFormat? byName = Decoders.TryGetValue(Path.GetExtension(input).TrimStart('.'), out var f) ? f : null;
+        MagickFormat? byContent = Sniff.FormatOf(head)?.Ext switch
+        {
+            "jpg" => MagickFormat.Jpeg,
+            "png" => MagickFormat.Png,
+            "gif" => MagickFormat.Gif,
+            "bmp" => MagickFormat.Bmp,
+            "webp" => MagickFormat.WebP,
+            "heic" => MagickFormat.Heic,
+            "avif" => MagickFormat.Avif,
+            "tiff" => MagickFormat.Tiff,
+            _ => null,
+        };
+        // Camera raw files start like TIFF files; their own decoder knows better.
+        if (byContent == MagickFormat.Tiff && byName is not (null or MagickFormat.Jpeg or MagickFormat.Png or MagickFormat.Gif
+                or MagickFormat.Bmp or MagickFormat.Dib or MagickFormat.WebP)) return byName;
+        return byContent ?? byName;
+    }
+
+    private static readonly object setupGate = new();
+    private static bool isSetUp;
+
+    /// <summary>
+    /// Limits what ImageMagick may do, once, before its first use: no scripting formats, nothing
+    /// fetched, no helper programs, and a ceiling on memory and disk so that a small file claiming
+    /// to be an enormous picture is refused instead of filling the PC.
+    /// </summary>
+    public static void Setup()
+    {
+        lock (setupGate)
+        {
+            if (isSetUp) return;
+            isSetUp = true;
+            var files = ConfigurationFiles.Default;
+            files.Policy.Data = Policy;
+            // ImageMagick reads its configuration from files. Each process writes its own, so one
+            // Convert window never reads a folder another is in the middle of writing.
+            var folder = Path.Combine(Paths.TempRoot, "magick", Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Directory.CreateDirectory(folder);
+            MagickNET.Initialize(files, folder);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => Paths.TryDelete(folder);
+
+            // A quarter of the PC's memory for pixels; past that ImageMagick uses a temp file, up to the disk limit.
+            ResourceLimits.LimitMemory(new Percentage(25));
+            ResourceLimits.Disk = 8UL << 30;
+            ResourceLimits.MaxMemoryRequest = 4UL << 30;
+            // No real picture is wider or taller; JPEG stops at 65,535.
+            ResourceLimits.Width = 100_000;
+            ResourceLimits.Height = 100_000;
+            ResourceLimits.ListLength = 64;
+        }
+    }
+
+    // ImageMagick allows everything that isn't denied, and the last matching rule wins.
+    private const string Policy = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <policymap>
+          <policy domain="delegate" rights="none" pattern="*"/>
+          <policy domain="filter" rights="none" pattern="*"/>
+          <policy domain="path" rights="none" pattern="@*"/>
+          <policy domain="path" rights="none" pattern="|*"/>
+          <policy domain="module" rights="none" pattern="{MSL,MVG,URL,EPHEMERAL,TEXT,LABEL,CAPTION,PANGO,SCRIPT,VID,SCR,CLIPBOARD,SCREENSHOT,MPR,INLINE,FTP,HTTP,HTTPS}"/>
+          <policy domain="coder" rights="write" pattern="{PDF,EPDF,PS,PS2,PS3,EPS,EPSF,EPSI,EPT,AI,XPS,PCL}"/>
+        </policymap>
+        """;
 
     public static string Convert(string input, Target t, ConvSettings s, Runner runner)
     {
         runner.CheckCancelled();
-        var read = new MagickReadSettings { FrameIndex = 0, FrameCount = 1 };
+        Setup();
         MagickImage img;
-        try { img = new MagickImage(input, read); }
+        try
+        {
+            if ((Sniff.Header(input) is { } head ? DecoderFor(input, head) : null) is not { } decoder)
+                throw new ConvertException("Couldn't read this image");
+            // Read from a stream, not by name: ImageMagick gives meaning to parts of a file name
+            // ("photo[1].jpg" is a frame, "label:…" a made-up picture), and a name is just a name.
+            using var file = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read);
+            img = new MagickImage(file, new MagickReadSettings { Format = decoder, FrameIndex = 0, FrameCount = 1 });
+        }
         catch (MagickException e) { throw new ConvertException($"Couldn't read this image ({FirstLine(e.Message)})"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new ConvertException("Couldn't read this image"); }
 
         using (img)
         {
-            img.AutoOrient();
-            if (s.MaxSize > 0 && Math.Max(img.Width, img.Height) > s.MaxSize)
-                img.Resize(new MagickGeometry((uint)s.MaxSize, (uint)s.MaxSize));   // fits inside, keeps aspect
-            if (t.Id is "jpg" or "bmp" && img.HasAlpha)
+            try
             {
-                img.BackgroundColor = MagickColors.White;
-                img.Alpha(AlphaAction.Remove);
-                img.Alpha(AlphaAction.Off);
+                runner.CheckCancelled();
+                img.AutoOrient();
+                if (s.MaxSize > 0 && Math.Max(img.Width, img.Height) > s.MaxSize)
+                    img.Resize(new MagickGeometry((uint)s.MaxSize, (uint)s.MaxSize));   // fits inside, keeps aspect
+                if (t.Id is "jpg" or "bmp" && img.HasAlpha)
+                {
+                    img.BackgroundColor = MagickColors.White;
+                    img.Alpha(AlphaAction.Remove);
+                    img.Alpha(AlphaAction.Off);
+                }
+                if (t.IsLossyImage) img.Quality = (uint)Math.Round(Math.Clamp(s.ImageQuality, 0.05, 1) * 100);
+                if (t.Id == "pdf-img") img.Strip();
             }
-            if (t.IsLossyImage) img.Quality = (uint)Math.Round(Math.Clamp(s.ImageQuality, 0.05, 1) * 100);
-            if (t.Id == "pdf-img") img.Strip();
+            catch (MagickException e) { throw new ConvertException($"Couldn't read this image ({FirstLine(e.Message)})"); }
 
             runner.CheckCancelled();
             var out_ = Paths.UniqueOutput(input, t.Ext);
             try
             {
-                if (t.Id == "heic") WindowsHeif.Write(img, out_, s.ImageQuality);
-                else img.Write(out_, FormatFor(t.Id));
-                runner.CheckCancelled();
+                // Stopped or failed while writing: WriteNew removes what was written so far.
+                Paths.WriteNew(out_, file =>
+                {
+                    if (t.Id == "heic") WindowsHeif.Write(img, file, s.ImageQuality);
+                    else img.Write(file, FormatFor(t.Id));
+                    runner.CheckCancelled();
+                });
             }
-            catch (StoppedException)
+            catch (MagickException e) { throw new ConvertException($"Couldn't write {t.Label} ({FirstLine(e.Message)})"); }
+            catch (IOException) when (!Directory.Exists(Path.GetDirectoryName(out_)) || !OutputFolder.IsWritable(Path.GetDirectoryName(out_)!))
             {
-                // Stopped: no unwanted file stays behind.
-                Paths.TryDelete(out_);
-                throw;
+                // A format this PC can write, but the file can't be created: that's the folder, not the format.
+                throw new ConvertException($"Couldn't save to “{OutputFolder.Name(Path.GetDirectoryName(out_)!)}”: that folder can't be written to");
             }
-            catch (MagickException e)
+            catch (Exception e) when (e is not (ConvertException or OperationCanceledException))
             {
-                Paths.TryDelete(out_);
-                throw new ConvertException($"Couldn't write {t.Label} ({FirstLine(e.Message)})");
-            }
-            catch (Exception e) when (e is not ConvertException)
-            {
-                Paths.TryDelete(out_);
                 throw new ConvertException($"Couldn't write {t.Label} ({FirstLine(e.Message)})");
             }
             return out_;
@@ -91,14 +230,11 @@ public static class WindowsHeif
     {
         try
         {
+            ImageConv.Setup();
             using var probe = new MagickImage(MagickColors.Gray, 64, 64);
-            var tmp = Path.Combine(Path.GetTempPath(), $"convert-heif-probe-{Guid.NewGuid():N}.heic");
-            try
-            {
-                Write(probe, tmp, 0.5);
-                return new FileInfo(tmp).Length > 0;
-            }
-            finally { Paths.TryDelete(tmp); }
+            using var encoded = new MemoryStream();
+            Write(probe, encoded, 0.5);
+            return encoded.Length > 0;
         }
         catch (Exception) { return false; }
     });
@@ -106,11 +242,11 @@ public static class WindowsHeif
     public static bool Available => available.Value;
 
     /// <summary>Encodes an already decoded, oriented and resized image as HEIC.</summary>
-    public static void Write(MagickImage img, string path, double quality) =>
+    public static void Write(MagickImage img, Stream output, double quality) =>
         // WinRT async calls block safely on the thread pool (never on a UI thread).
-        Task.Run(() => WriteAsync(img, path, quality)).GetAwaiter().GetResult();
+        Task.Run(() => WriteAsync(img, output, quality)).GetAwaiter().GetResult();
 
-    private static async Task WriteAsync(MagickImage img, string path, double quality)
+    private static async Task WriteAsync(MagickImage img, Stream output, double quality)
     {
         // Hand the pixels over as BGRA8, the format WIC's encoders take.
         var w = img.Width;
@@ -135,7 +271,6 @@ public static class WindowsHeif
 
         stream.Seek(0);
         await using var src = stream.AsStreamForRead();
-        await using var fs = File.Create(path);
-        await src.CopyToAsync(fs);
+        await src.CopyToAsync(output);
     }
 }

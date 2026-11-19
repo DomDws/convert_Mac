@@ -52,27 +52,26 @@ public sealed class RecycleTests : IDisposable
     }
 
     /// <summary>Windows used to stop here with a "permanently delete it?" dialog. Nothing may ask, or delete.</summary>
-    private void ExpectLeftAlone(string file, bool checkBinSize)
+    private async Task ExpectLeftAlone(string file, bool checkBinSize)
     {
-        var recycle = Task.Run(() => FileOps.Recycle(file, checkBinSize));
-        Assert.True(recycle.Wait(TimeSpan.FromSeconds(30)), "Recycle is waiting for an answer to a dialog");
-        Assert.False(recycle.Result);
+        // A timeout here means Recycle is waiting for an answer to a dialog.
+        Assert.False(await Task.Run(() => FileOps.Recycle(file, checkBinSize)).WaitAsync(TimeSpan.FromSeconds(30)));
         Assert.True(File.Exists(file));
         Assert.Equal(Huge, new FileInfo(file).Length);
         Assert.Equal(["huge.bin"], Directory.GetFileSystemEntries(dir).Select(Path.GetFileName));
     }
 
     [Fact]
-    public void AFileTooBigForTheRecycleBinIsLeftWhereItIs()
+    public async Task AFileTooBigForTheRecycleBinIsLeftWhereItIs()
     {
-        if (HugeFile() is { } file) ExpectLeftAlone(file, checkBinSize: true);
+        if (HugeFile() is { } file) await ExpectLeftAlone(file, checkBinSize: true);
     }
 
     [Fact]
-    public void AFileWindowsDeletesInsteadOfRecyclingIsPutBack()
+    public async Task AFileWindowsDeletesInsteadOfRecyclingIsPutBack()
     {
         // Without the size check Windows goes ahead and deletes the file; it has to be back afterwards.
-        if (HugeFile() is { } file) ExpectLeftAlone(file, checkBinSize: false);
+        if (HugeFile() is { } file) await ExpectLeftAlone(file, checkBinSize: false);
     }
 
     [Fact]
