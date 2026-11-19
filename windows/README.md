@@ -1,24 +1,30 @@
 # Convert for Windows
 
 The Windows version of Convert. Right-click files in Explorer → **Convert…** → pick a format → the new
-file lands next to the original. Everything runs locally.
+file lands next to the original. Everything runs on your PC; nothing is uploaded.
 
 It sits directly in the Windows 11 context menu (not under "Show more options"), and the window follows
-your light/dark theme and accent colour.
+your light or dark theme and accent colour.
 
-> [!NOTE]
-> Early port. It does what the Mac app does (see the [main README](../README.md)), with the differences
-> listed under *Known limitations*.
+It does what the Mac app does at version 0.4 (see the [main README](../README.md) for the formats and
+settings), with the differences listed under [Differences from the Mac app](#differences-from-the-mac-app).
 
 ## Requirements
 
 - Windows 11 (x64)
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) to build (`winget install Microsoft.DotNet.SDK.10`)
+- The [.NET 10 SDK](https://dotnet.microsoft.com/download) to build: `winget install Microsoft.DotNet.SDK.10`
 - **ffmpeg** for audio and video: `winget install Gyan.FFmpeg`
-  (or put `ffmpeg.exe` + `ffprobe.exe` in `windows\tools\ffmpeg\`; `build.ps1` then bundles them)
-- Optional: **LibreOffice** for Word, ODT and RTF documents: `winget install TheDocumentFoundation.LibreOffice`
+  (or put `ffmpeg.exe` and `ffprobe.exe` in `windows\tools\ffmpeg\`, and `build.ps1` bundles them)
+- Optional: **LibreOffice** for Word, ODT and RTF documents:
+  `winget install TheDocumentFoundation.LibreOffice`
 
-Images, PDFs, and Markdown / plain text / HTML → PDF work without anything extra.
+Images, PDFs (to images, text, Word, ODT and RTF), fonts, and Markdown, plain text and HTML → PDF, HTML
+or text work without anything extra. ffmpeg and LibreOffice can be installed later: Convert notices
+without a restart.
+
+The repository must be in a folder whose path has no `'`, `;` or `%`, because the .NET build tools
+can't handle those. If no Windows SDK is installed, `build.ps1` downloads Microsoft's packaging tools
+once from nuget.org: one fixed version, checked against a known fingerprint before it is used.
 
 ## Install
 
@@ -27,43 +33,137 @@ cd windows
 .\build.ps1 -Install
 ```
 
-This builds Convert, copies it to `%LOCALAPPDATA%\Programs\Convert` and registers the context-menu
-entry. Then right-click a supported file in Explorer → **Convert…**. Convert also appears in the Start
-menu, where you can open it and drag files onto the window.
+This builds Convert, copies it to `%LOCALAPPDATA%\Programs\Convert` and adds **Convert…** to Explorer's
+right-click menu. Convert also appears in the Start menu, where you can open it and drag files onto the
+window.
 
-The first time, Windows asks for permission (UAC) once. Windows only adds context-menu entries from
-signed packages, so `build.ps1` creates a certificate just for your PC (`CN=Convert Dev`) and adds it to
-the trusted certificates. Nothing is sent anywhere.
+### About the certificate
+
+Windows only adds context-menu entries from signed packages. So each install makes a new certificate
+named "CN=Convert Dev", signs the package with it, and deletes the certificate's private key right
+away. Then Windows asks once for permission (UAC) to trust that certificate on this PC.
+
+Trusting it means: Windows accepts packages signed with this certificate. Because the key is already
+deleted, the only package that can ever carry that signature is the one you just built. The certificate
+is valid for 30 days; Convert keeps working after that. The trust entry stays until you uninstall, and
+the next install replaces it. Nothing is sent anywhere.
+
+A plain `.\build.ps1` (without `-Install`) builds an unsigned package and creates no certificate.
 
 ## Uninstall
 
 ```powershell
-.\uninstall.ps1        # removes the context menu and the program
-.\uninstall.ps1 -All   # also removes settings and the signing certificate
+.\uninstall.ps1          # removes the context menu, the program, the certificate and its trust entry
+.\uninstall.ps1 -All     # also removes your settings and Convert's temporary files
+.\uninstall.ps1 -WhatIf  # only shows what would be removed
 ```
+
+Removing the trust entry needs one permission prompt. If you say No, the script tells you what is left
+and how to finish. It always ends with a list of what was removed and what, if anything, is left.
+
+## Privacy
+
+Convert has no network code, no analytics and no update check. It reads the files you give it and
+writes the converted files next to them (or to Downloads, when their folder is read-only).
+
+Converting a document never touches the network either. Pictures, fonts and styles a document links to
+on the web or on a network share are left out; only files in the document's own folder are used. Local
+pictures are embedded in Word and OpenDocument output instead of linked, and converted files don't
+contain the original's folder or your user name.
+
+## Differences from the Mac app
+
+The formats, their IDs, the settings and their defaults are the Mac's
+(`Sources/Convert/Formats.swift`). These are the places where Windows differs, and why.
+
+**Formats that are only offered when the PC can write them**
+
+- **M4A (HE-AAC)** needs an ffmpeg built with `libfdk_aac`, which the usual builds (winget's included)
+  don't have. Without it the format isn't listed.
+- **HEIC** output uses Windows' own encoder and needs the free *HEIF Image Extensions* and the *HEVC
+  Video Extensions* from the Microsoft Store. Without them HEIC isn't listed. (Reading HEIC always works.)
+- **AVIF** and **WebP** are written by Magick.NET and are always there in practice; they're checked
+  rather than assumed. No separate `cwebp` is needed.
+
+**Things that work differently**
+
+- **Word, ODT and RTF documents** (in or out) need LibreOffice; the Mac uses `textutil`, which is part
+  of macOS. Without LibreOffice the window says so when such a conversion is chosen.
+- **Paper size** (A4 / US Letter) applies to Markdown, text and HTML. Word, ODT and RTF files keep the
+  page setup they have. A4 pages come out as 594.96 × 841.92 pt, a rounding by the print engine.
+- **Remote content in documents** is never loaded: remote pictures, web fonts and linked stylesheets
+  don't appear in converted documents, and links to local files are removed from PDFs.
+- **Hardware encoding** uses whichever of NVIDIA (NVENC), Intel (Quick Sync) or AMD (AMF) passes a short
+  test, for H.264, HEVC and MKV. ProRes has no hardware encoder on Windows, so MOV (ProRes) has no
+  "Hardware encoding" option.
+- **AAC** is encoded by ffmpeg's own encoder; the Mac uses Apple's.
+- **PDF to Word, ODT and RTF** reads the text in the order the PDF draws it, so a PDF that draws its
+  text out of reading order can come out reordered. Fonts are named after the PDF's font names
+  ("Helvetica", "Times"), which Word and LibreOffice replace with what's installed.
+- **The label "Word 97–2003 (DOC)"** is "Word 97–2004" on the Mac, after Word 2004 for Mac. On Windows
+  that format has always been called 97–2003.
+- **The Explorer menu** decides by the file name alone, so it appears at once for any selection; a
+  `.ts` file that turns out to be TypeScript is recognised when the window opens.
+- **Move original to Recycle Bin** leaves the original where it is, and says so, when it can't be
+  recycled: on network shares, on drives without a Recycle Bin, and for files too big for the bin.
+  Windows would delete those for good.
+- **Settings** are stored in `%LOCALAPPDATA%\Convert\settings.json`.
+
+**Limitations shared with the Mac app**: see the main README. In particular PDF to Word carries over
+text only (a paragraph that runs over a page break becomes two, hyphens at line ends stay, tables come
+out as loose rows), fonts are rewrapped and never redrawn, and WOFF2 files that hold several fonts
+aren't read.
+
+**Windows-only limitations**
+
+- The context-menu entry needs the .NET 10 runtime installed. A self-contained release would need that
+  part rewritten as a native DLL.
+- HTML or Markdown converted to HTML out of a read-only folder ends up in Downloads, away from the
+  pictures it refers to by relative path.
+- Administrators can override the startup options of the WebView2 runtime (which prints documents to
+  PDF) by policy or with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`. That removes two of the safeguards that
+  keep document conversion off the network; the third, which checks every request, still applies.
 
 ## Development
 
 ```powershell
 dotnet build            # everything
-dotnet test             # converts generated test media for real (needs ffmpeg)
+dotnet test             # unit tests; most run real conversions (ffmpeg needed for audio and video)
 src\Convert\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Convert.exe --cli mp3 song.opus
-src\Convert\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Convert.exe --cli          # lists format IDs
+src\Convert\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Convert.exe --cli                      # lists all format IDs
+src\Convert\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Convert.exe --cli --targets song.opus  # the formats offered for a file
 ```
 
-| Project | What's in it |
-|---|---|
-| `src/Convert.Core` | Formats, ffmpeg arguments, images (Magick.NET), documents (Markdig, WebView2, LibreOffice), PDF (Windows.Data.Pdf, PdfPig) |
-| `src/Convert` | The window (WPF, Fluent theme) and the `--cli` test mode |
-| `src/Convert.Shell` | The context-menu entry (`IExplorerCommand`, loaded by Explorer through the package) |
-| `packaging/` | Package manifest template and logos |
-| `tests/Convert.Core.Tests` | xUnit tests that run real conversions |
+`--cli` prints `OK   name → out (0.42s)` or `FAIL name: reason` per file and exits with 0, 1 (a
+conversion failed) or 2 (wrong usage), like the Mac app. `CONVERT_SETTINGS` changes individual settings
+(`$env:CONVERT_SETTINGS = '{"hardware": false}'`; the names are the Mac's), and `CONVERT_FALLBACK_DIR`
+replaces Downloads as the folder used when the original's folder is read-only. Convert.exe is a
+windowed program, so PowerShell only waits for it when its output is captured or piped.
 
-## Known limitations
+How the code is put together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- **HEIC output** uses Windows' own encoder and needs the free *HEIF Image Extensions* and the
-  *HEVC Video Extensions* from the Microsoft Store; without them HEIC isn't offered. **HE-AAC** only
-  shows up with an ffmpeg build that includes `libfdk_aac`.
-- **Paper size** (A4 / Letter) applies to Markdown, text and HTML. Word/ODT/RTF keep their own page setup.
-- The context-menu part needs the .NET 10 runtime installed. A self-contained release would need it
-  rewritten as a native DLL.
+### Checks
+
+`check.ps1` runs what CI (`.github/workflows/windows.yml`) runs, from any folder:
+
+```powershell
+.\check.ps1            # everything below
+.\check.ps1 format     # dotnet format --verify-no-changes; -Fix reformats
+.\check.ps1 build      # build and unit tests (warnings are errors), then a release build in out\smoke-app
+.\check.ps1 smoke      # rebuild the release app, then run the conversion smoke test
+```
+
+The smoke test (`smoke-test.ps1`; `-Keep`, `-Out DIR`, `-Strict`, `-RequireLibreOffice`) generates small
+sample files (a 24-bit 96 kHz WAV, a short video with sound, a PNG, Markdown, plain text, a PDF and a
+Word file made by the app, two `.ts` files: TypeScript and an MPEG transport stream, and fonts copied
+from `C:\Windows\Fonts`) and converts each one to every format the app offers for it. Any failed
+conversion fails the run and is listed by format ID; samples and logs are kept. It needs ffmpeg; without
+it, audio and video formats are skipped locally (CI treats that as a failure). Conversions that need
+LibreOffice are skipped when it isn't installed, also in CI, which doesn't install it. H.264, HEVC and
+MKV are also tested with hardware encoding off; on a PC without a GPU encoder (like GitHub's runners),
+the normal run checks that the app falls back to the software one. CI uses .NET SDK 10.0.404, whose
+`dotnet format` decides the formatting; with another SDK, `format` warns that results may differ.
+
+A few tests only run when asked for, because of what they do to the PC they run on:
+`CONVERT_TEST_RECYCLE=1` puts a small file in the real Recycle Bin, and `CONVERT_FONT_SWEEP=1` converts
+every font in `C:\Windows\Fonts` and back, which takes a while.
