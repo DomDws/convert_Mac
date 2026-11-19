@@ -100,6 +100,12 @@ The formats, their IDs, the settings and their defaults are the Mac's
 - **PDF to Word, ODT and RTF** reads the text in the order the PDF draws it, so a PDF that draws its
   text out of reading order can come out reordered. Fonts are named after the PDF's font names
   ("Helvetica", "Times"), which Word and LibreOffice replace with what's installed.
+- **WOFF2** is always compressed at Brotli's highest setting, which comes with .NET; the Mac only gets
+  that when the `brotli` tool is installed. It takes a few seconds for a typical font and a minute or
+  more for a large Chinese, Japanese or Korean one. Stop works at once, but one processor core stays
+  busy until the compressor finishes the step it is in.
+- **Stop during a large image** takes effect when the encoder returns (some seconds for a very large
+  AVIF); nothing is left behind.
 - **The label "Word 97–2003 (DOC)"** is "Word 97–2004" on the Mac, after Word 2004 for Mac. On Windows
   that format has always been called 97–2003.
 - **The Explorer menu** decides by the file name alone, so it appears at once for any selection; a
