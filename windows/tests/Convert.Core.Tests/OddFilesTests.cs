@@ -43,6 +43,24 @@ public sealed class OddFilesTests : IDisposable
     }
 
     [Fact]
+    public void TempFoldersLeftByAConvertThatWasEndedAreRemovedLater()
+    {
+        // What a conversion's temp folder looks like, a week after Convert was ended in the middle of it.
+        var old = Directory.CreateDirectory(dir.File(Guid.NewGuid().ToString("N"))).FullName;
+        File.WriteAllText(Path.Combine(old, "doc.html"), "<p>somebody's document</p>");
+        Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-7));
+        var inUse = Directory.CreateDirectory(dir.File(Guid.NewGuid().ToString("N"))).FullName;
+        var notOurs = Directory.CreateDirectory(dir.File("holiday photos")).FullName;
+        Directory.SetLastWriteTimeUtc(notOurs, DateTime.UtcNow.AddDays(-7));
+
+        Paths.RemoveOldTempDirs(dir.Path, TimeSpan.FromDays(1));
+
+        Assert.False(Directory.Exists(old));
+        Assert.True(Directory.Exists(inUse));
+        Assert.True(Directory.Exists(notOurs));
+    }
+
+    [Fact]
     public async Task AnEmptyTextFileIsAnEmptyDocument()
     {
         var input = dir.Write("empty.txt", "");

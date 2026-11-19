@@ -144,9 +144,33 @@ public static class Paths
 
     public static string TempDir()
     {
+        if (Interlocked.Exchange(ref swept, 1) == 0) RemoveOldTempDirs(TempRoot, TimeSpan.FromDays(1));
         var d = Path.Combine(TempRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(d);
         return d;
+    }
+
+    private static int swept;
+
+    /// <summary>
+    /// A conversion removes its temp folder when it ends, but not if Convert was ended first (a crash,
+    /// Task Manager, the power going). Those folders can hold a copy of somebody's document, so the
+    /// next run removes any that are older than <paramref name="age"/>: no conversion takes that long.
+    /// </summary>
+    public static void RemoveOldTempDirs(string root, TimeSpan age)
+    {
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                // Only the folders TempDir makes: 32 hex digits.
+                var name = Path.GetFileName(dir);
+                if (name.Length != 32 || name.AsSpan().IndexOfAnyExcept("0123456789abcdef") >= 0) continue;
+                if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > age) TryDelete(dir);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public static void TryDelete(string? path)
