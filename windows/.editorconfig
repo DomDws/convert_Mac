@@ -1,0 +1,5 @@
+# Read by dotnet format (.\check.ps1 format). root stops the search here, so an .editorconfig in a
+# folder above the checkout (a personal one, or one added for the Mac code) can't change the result.
+# Line endings are left alone on purpose: they depend on how Git checked the files out
+# (core.autocrlf), and a check that fails every file on one kind of checkout checks nothing.
+root = true
