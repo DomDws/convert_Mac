@@ -46,6 +46,26 @@ if ([IO.Directory]::Exists($InstallDir)) {
     else { $left.Add("program files in $InstallDir (in use: close Explorer windows or sign out and back in, then run .\uninstall.ps1 again)") }
 }
 
+# A Convert installed by the setup program is also listed in Settings > Apps, and gets a Start menu
+# shortcut when the menu entry couldn't be registered. With the program gone, both would point nowhere.
+# (The key's name is the AppId in installer\Convert.iss.)
+$listed = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F0D3B52-7C1E-4E0A-9B5D-2A8C4F17E963}_is1'
+if (Test-Path -LiteralPath $listed) {
+    if (-not $PSCmdlet.ShouldProcess($listed, 'Remove the entry in Settings > Apps')) { $removed.Add('the entry in Settings > Apps') }
+    else {
+        try { Remove-Item -LiteralPath $listed -Recurse -Force -ErrorAction Stop; Removed 'the entry in Settings > Apps' }
+        catch { $left.Add("the entry in Settings > Apps ($($_.Exception.Message))") }
+    }
+}
+$shortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)) 'Convert.lnk'
+if ([IO.File]::Exists($shortcut)) {
+    if (-not $PSCmdlet.ShouldProcess($shortcut, 'Remove the Start menu shortcut')) { $removed.Add('the Start menu shortcut') }
+    else {
+        try { [IO.File]::Delete($shortcut); Removed 'the Start menu shortcut' }
+        catch { $left.Add("the Start menu shortcut $shortcut ($($_.Exception.Message))") }
+    }
+}
+
 # --- certificates ------------------------------------------------------------------------------------
 
 Write-Step 'Removing the signing certificate'

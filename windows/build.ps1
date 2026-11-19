@@ -7,8 +7,19 @@
     .\build.ps1 -Install              also sign the package, install to %LOCALAPPDATA%\Programs\Convert and
                                       register the context menu ("Convert..." in Explorer's right-click menu)
     .\build.ps1 -Configuration Debug  build the Debug configuration
+    .\build.ps1 -Setup -CertificateThumbprint <thumbprint> [-TimestampUrl <url>]
+                                      build the setup program for a release (out\Convert-<version>-setup.exe),
+                                      signed with your code-signing certificate
+    .\build.ps1 -Setup -TestSign      the same, signed like -Install does it, to try the setup program on this PC
+    .\build.ps1 -Setup                the same, unsigned: installs, but Windows won't add the menu entry
 
   A plain build creates no certificate or key and needs no elevation, so it is safe for CI.
+
+  -Setup needs Inno Setup 6 (winget install JRSoftware.InnoSetup). The setup program holds the app without
+  .NET; on a PC without the .NET Desktop Runtime it fetches Microsoft's installer for the version pinned
+  below and checks its SHA-256 before running it. With -CertificateThumbprint the package's publisher is
+  the certificate's subject, and the app's files, the package, the setup program and its uninstaller are
+  all signed with it. The certificate is looked for in the current user's and the PC's personal store.
 
   -Install signs the package with a brand-new self-signed certificate "CN=Convert Dev" (code signing only,
   non-exportable key, valid for 30 days) and deletes its private key right after signing, so nothing can
@@ -23,6 +34,10 @@
 [CmdletBinding()]
 param(
     [switch]$Install,
+    [switch]$Setup,
+    [switch]$TestSign,
+    [string]$CertificateThumbprint,
+    [string]$TimestampUrl,
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release'
 )
@@ -39,6 +54,41 @@ $AppOut = Join-Path $Out 'app'
 $PkgDir = Join-Path $Out 'pkg'
 $Msix = Join-Path $Out 'Convert.msix'
 $Publisher = $ConvertPublisher
+
+if ($Install -and $Setup) { throw 'Use -Install or -Setup, not both: -Install puts this build on this PC, -Setup makes the setup program that does that anywhere.' }
+if (($TestSign -or $CertificateThumbprint -or $TimestampUrl) -and -not $Setup) { throw '-TestSign, -CertificateThumbprint and -TimestampUrl go with -Setup.' }
+if ($TestSign -and $CertificateThumbprint) { throw 'Use -TestSign or -CertificateThumbprint, not both.' }
+if ($TimestampUrl -and -not $CertificateThumbprint) { throw '-TimestampUrl goes with -CertificateThumbprint.' }
+if ($TimestampUrl -and $TimestampUrl -notmatch '^https?://[^\s"]+$') { throw "-TimestampUrl must be an http(s) address, not '$TimestampUrl'." }
+
+# The certificate of a release. Its subject becomes the package's publisher, which Windows compares
+# with the signature letter for letter.
+$ReleaseCert = $null
+if ($CertificateThumbprint) {
+    $wanted = ($CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+    Assert-Thumbprint $wanted
+    foreach ($location in 'CurrentUser', 'LocalMachine') {
+        if ($ReleaseCert) { break }
+        $ReleaseCert = Get-ChildItem -LiteralPath "Cert:\$location\My" -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $wanted } | Select-Object -First 1
+        $ReleaseCertLocation = $location
+    }
+    if (-not $ReleaseCert) { throw "No certificate with thumbprint $wanted in Cert:\CurrentUser\My or Cert:\LocalMachine\My. List yours with: Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert" }
+    if (-not $ReleaseCert.HasPrivateKey) { throw "The certificate $wanted has no private key here, so it can't sign." }
+    $usages = @($ReleaseCert.Extensions | Where-Object { $_ -is [Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } | ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
+    if ($usages -notcontains $CodeSigningOid) { throw "The certificate $wanted isn't a code-signing certificate." }
+    if ($ReleaseCert.NotAfter -lt (Get-Date)) { throw "The certificate $wanted expired on $($ReleaseCert.NotAfter.ToString('yyyy-MM-dd'))." }
+    $Publisher = $ReleaseCert.Subject
+}
+
+# The .NET Desktop Runtime the setup program fetches from Microsoft when a PC has none. Convert runs on
+# any 10.0.x, so this only decides what a PC without .NET gets. Bump it with each release:
+#   1. https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json lists the latest
+#      release; take the windowsdesktop file named windowsdesktop-runtime-win-x64.exe
+#   2. download it, compare its SHA-512 with the one in that list, and check its signature:
+#      (Get-AuthenticodeSignature <file>).SignerCertificate.Subject   -> ... O=Microsoft Corporation ...
+#   3. (Get-FileHash <file> -Algorithm SHA256).Hash   -> put it below together with the version
+$DesktopRuntimeVersion = '10.0.15'
+$DesktopRuntimeSha256 = 'E61B030C1673EDFA3C0844502EFF83198C46AF9E7DF70DFC6E2EFC5B11EA513A'
 
 # Microsoft.Windows.SDK.BuildTools, used when no Windows SDK is installed. To bump it:
 #   1. pick a stable version from https://www.nuget.org/packages/Microsoft.Windows.SDK.BuildTools
@@ -190,10 +240,28 @@ Write-Step "Building ($Configuration)"
 if (-not (Remove-DirectorySafely -Path $Out -Parent $Root -Attempts 6)) {
     throw "Couldn't empty $Out (files in use). Close any Convert window started from out\app and try again."
 }
-foreach ($project in 'src\Convert\Convert.csproj', 'src\Convert.Shell\Convert.Shell.csproj') {
-    & $dotnet publish (Join-Path $Root $project) -c $Configuration -o $AppOut --nologo -v quiet
-    if ($LASTEXITCODE) { throw "Building $project failed (exit code $LASTEXITCODE); see the errors above." }
+
+# Convert.exe names the package it belongs to in its manifest (the <msix> element), publisher included.
+# For a release that is the certificate's subject, so the app is built with a copy that says so.
+$AppManifest = Join-Path $Root 'src\Convert\app.manifest'
+$manifestArgs = @()
+if ($Publisher -ne $ConvertPublisher) {
+    $stamped = New-Object Xml.XmlDocument
+    $stamped.PreserveWhitespace = $true
+    $stamped.Load($AppManifest)
+    $node = $stamped.SelectSingleNode("//*[local-name()='msix']")
+    if (-not $node) { throw "src\Convert\app.manifest has no <msix> element to put the publisher in." }
+    $node.SetAttribute('publisher', $Publisher)
+    [void][IO.Directory]::CreateDirectory($Out)
+    $AppManifest = Join-Path $Out 'app.manifest'
+    $stamped.Save($AppManifest)
+    $manifestArgs = @("-p:ApplicationManifest=$AppManifest")
 }
+
+& $dotnet publish (Join-Path $Root 'src\Convert\Convert.csproj') -c $Configuration -o $AppOut --nologo -v quiet @manifestArgs
+if ($LASTEXITCODE) { throw "Building src\Convert\Convert.csproj failed (exit code $LASTEXITCODE); see the errors above." }
+& $dotnet publish (Join-Path $Root 'src\Convert.Shell\Convert.Shell.csproj') -c $Configuration -o $AppOut --nologo -v quiet
+if ($LASTEXITCODE) { throw "Building src\Convert.Shell\Convert.Shell.csproj failed (exit code $LASTEXITCODE); see the errors above." }
 Copy-Item -LiteralPath (Join-Path $Root 'packaging\Assets') -Destination (Join-Path $AppOut 'Assets') -Recurse
 
 # A bundled ffmpeg (windows\tools\ffmpeg\ffmpeg.exe + ffprobe.exe) is shipped in tools\ next to Convert.exe.
@@ -234,10 +302,10 @@ if (@($parts | Where-Object { $_ -gt 65535 }).Count) { throw "Version $version c
 $packageVersion = $parts -join '.'
 
 # Package identity must match the <msix> element in app.manifest, or Convert.exe runs without it.
-[xml]$appManifest = [IO.File]::ReadAllText((Join-Path $Root 'src\Convert\app.manifest'))
-$msixNode = $appManifest.SelectSingleNode("//*[local-name()='msix']")
+[xml]$appManifestXml = [IO.File]::ReadAllText($AppManifest)
+$msixNode = $appManifestXml.SelectSingleNode("//*[local-name()='msix']")
 if (-not $msixNode -or $msixNode.GetAttribute('publisher') -ne $Publisher -or $msixNode.GetAttribute('packageName') -ne $ConvertPackageName) {
-    throw "src\Convert\app.manifest's <msix> element must have publisher=`"$Publisher`" and packageName=`"$ConvertPackageName`"."
+    throw "$AppManifest's <msix> element must have publisher=`"$Publisher`" and packageName=`"$ConvertPackageName`"."
 }
 
 $itemTypes = ($extensions | ForEach-Object {
@@ -271,69 +339,143 @@ Remove-Item -LiteralPath "$check.msix" -Force
 $r = Invoke-Native $sdk.MakeAppx @('pack', '/o', '/nv', '/d', $PkgDir, '/p', $Msix)
 if ($r.ExitCode -ne 0) { throw "makeappx failed (exit code $($r.ExitCode)):`n$($r.Output)$($r.Error)" }
 
-if (-not $Install) {
+if (-not $Install -and -not $Setup) {
     Write-Host ''
     Write-Host "Built $Msix (unsigned: no certificate was created or used)." -ForegroundColor Green
     Write-Host 'Run .\build.ps1 -Install to sign it, install Convert and add it to the context menu.'
     return
 }
 
-# --- signing (only with -Install) --------------------------------------------------------------------
+# --- signing (with -Install, and with -Setup when asked for) -----------------------------------------
+
+# Signs files with the certificate in use: $SignArguments is everything signtool needs before the file names.
+function Invoke-Sign([string[]]$Files) {
+    $r = Invoke-Native $sdk.SignTool (@($SignArguments) + $Files)
+    if ($r.ExitCode -ne 0) { throw "signtool failed (exit code $($r.ExitCode)):`n$($r.Output)$($r.Error)" }
+}
+
+function Find-InnoSetup {
+    $candidates = @(
+        (Join-Path (Get-LocalAppDataDir) 'Programs\Inno Setup 6\ISCC.exe'),
+        (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)) 'Inno Setup 6\ISCC.exe'),
+        (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)) 'Inno Setup 6\ISCC.exe'))
+    foreach ($c in $candidates) { if ([IO.File]::Exists($c)) { return $c } }
+    $cmd = Get-Command ISCC -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    throw 'Inno Setup 6 not found. Install it (winget install JRSoftware.InnoSetup) and run this again.'
+}
+
+# Builds out\Convert-<version>-setup.exe from out\app. Signs what it makes when a certificate is in use.
+function New-SetupProgram {
+    $iscc = Find-InnoSetup
+    Write-Step 'Building the setup program'
+    if ($SignArguments) {
+        # Our own programs; the libraries Convert uses carry their makers' signatures.
+        Invoke-Sign @('Convert.exe', 'Convert.dll', 'Convert.Core.dll', 'Convert.Shell.dll', 'Convert.Shell.comhost.dll' | ForEach-Object { Join-Path $AppOut $_ })
+    }
+    # The package travels with the app: Convert.exe --register-menu registers the one next to it.
+    Copy-Item -LiteralPath $Msix -Destination (Join-Path $AppOut 'Convert.msix') -Force
+    $isccArgs = @("/DAppVersion=$version", "/DAppDir=$AppOut", "/DOutDir=$Out",
+        "/DDotNetVersion=$DesktopRuntimeVersion", "/DDotNetSha256=$($DesktopRuntimeSha256.ToLowerInvariant())", '/Qp')
+    if ($SignArguments) {
+        # Inno Setup signs the uninstaller and the setup program itself with this command ($q is a quote, $f the file).
+        $isccArgs += '/DSign'
+        $isccArgs += '/Sconvertsign=$q' + $sdk.SignTool + '$q ' + (($SignArguments | ForEach-Object { if ($_ -match '\s') { '$q' + $_ + '$q' } else { $_ } }) -join ' ') + ' $f'
+    }
+    $isccArgs += (Join-Path $Root 'installer\Convert.iss')
+    $r = Invoke-Native $iscc $isccArgs -TimeoutSeconds 1800
+    if ($r.ExitCode -ne 0) { throw "Inno Setup failed (exit code $($r.ExitCode)):`n$($r.Output)$($r.Error)" }
+    $setup = Join-Path $Out "Convert-$version-setup.exe"
+    if (-not [IO.File]::Exists($setup)) { throw "Inno Setup reported success, but $setup isn't there.`n$($r.Output)" }
+    return $setup
+}
+
+$SignArguments = $null
+$SetupProgram = $null
+$singleUse = $Install -or $TestSign
+
+if ($ReleaseCert) {
+    Write-Step "Signing as $Publisher"
+    $SignArguments = @('sign', '/fd', 'SHA256', '/sha1', $ReleaseCert.Thumbprint, '/s', 'My')
+    if ($ReleaseCertLocation -eq 'LocalMachine') { $SignArguments += '/sm' }
+    if ($TimestampUrl) { $SignArguments += @('/tr', $TimestampUrl, '/td', 'SHA256') }
+    else { Write-Warning 'No -TimestampUrl given: the signatures stop counting on the day the certificate expires. Releases should be timestamped.' }
+    Invoke-Sign @($Msix)
+    $SetupProgram = New-SetupProgram
+}
+elseif (-not $singleUse) {
+    Write-Warning 'Building an unsigned setup program: it installs Convert, but Windows refuses to add the right-click menu entry of an unsigned package. Use -TestSign to try the real thing on this PC.'
+    $SetupProgram = New-SetupProgram
+}
 
 $InstallDir = Get-ConvertInstallDir
-
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if ($isAdmin) {
-    Write-Warning "This PowerShell runs as administrator. Convert is installed for the account running the script; if that isn't your normal account, cancel (Ctrl+C) and run .\build.ps1 -Install from a normal PowerShell window."
-}
-
-# Keys from earlier installs (older build.ps1 versions kept an exportable one in CurrentUser\My for
-# years). They're never used again, so they go now, whatever happens next.
-foreach ($storeName in 'My', 'CA') {
-    foreach ($old in @(Get-ConvertDevCerts 'CurrentUser' $storeName)) {
-        $left = Remove-UserCert -StoreName $storeName -Thumbprint $old.Thumbprint
-        if ($left -match 'key') { throw "Couldn't delete an old signing key: $left. Delete it in certmgr.msc (Personal, `"CN=Convert Dev`") and try again." }
-        if ($left) { Write-Warning "Couldn't delete $left; .\uninstall.ps1 removes it." }
-        else { Write-Note "Deleted an old signing certificate$(if ($old.HasPrivateKey) { ' and its key' }) from CurrentUser\$storeName ($($old.Thumbprint))" }
-    }
-}
-
-Write-Step "Signing with a new single-use certificate $Publisher"
-$new = New-SelfSignedCertificate -Type Custom -Subject $Publisher -KeyUsage DigitalSignature `
-    -TextExtension @("2.5.29.37={text}$CodeSigningOid", '2.5.29.19={text}') `
-    -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable `
-    -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(30) `
-    -FriendlyName 'Convert package signing (single use)' -CertStoreLocation Cert:\CurrentUser\My
-$thumbprint = $new.Thumbprint
-Assert-Thumbprint $thumbprint
+$thumbprint = $null
 $certBase64 = $null
-$keyInfo = $null
-try {
-    $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint"
-    $keyInfo = Get-PrivateKeyInfo $cert
-    $certBase64 = [Convert]::ToBase64String($cert.RawData)   # public part only
-    $r = Invoke-Native $sdk.SignTool @('sign', '/fd', 'SHA256', '/sha1', $thumbprint, '/s', 'My', $Msix)
-    if ($r.ExitCode -ne 0) { throw "signtool failed (exit code $($r.ExitCode)):`n$($r.Output)$($r.Error)" }
-} finally {
-    # The private key exists only for the seconds it takes to sign. New-SelfSignedCertificate also puts a
-    # copy of the certificate in CurrentUser\CA.
-    $leftovers = @(@('My', 'CA') | ForEach-Object { Remove-UserCert -StoreName $_ -Thumbprint $thumbprint } | Where-Object { $_ })
-    if ($leftovers.Count) { Write-Warning "Not everything of the signing certificate could be deleted: $($leftovers -join '; '). Run .\uninstall.ps1 to remove it." }
+
+if ($singleUse) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        Write-Warning "This PowerShell runs as administrator. Convert is installed for the account running the script; if that isn't your normal account, cancel (Ctrl+C) and run this from a normal PowerShell window."
+    }
+
+    # Keys from earlier installs (older build.ps1 versions kept an exportable one in CurrentUser\My for
+    # years). They're never used again, so they go now, whatever happens next.
+    foreach ($storeName in 'My', 'CA') {
+        foreach ($old in @(Get-ConvertDevCerts 'CurrentUser' $storeName)) {
+            $left = Remove-UserCert -StoreName $storeName -Thumbprint $old.Thumbprint
+            if ($left -match 'key') { throw "Couldn't delete an old signing key: $left. Delete it in certmgr.msc (Personal, `"CN=Convert Dev`") and try again." }
+            if ($left) { Write-Warning "Couldn't delete $left; .\uninstall.ps1 removes it." }
+            else { Write-Note "Deleted an old signing certificate$(if ($old.HasPrivateKey) { ' and its key' }) from CurrentUser\$storeName ($($old.Thumbprint))" }
+        }
+    }
+
+    Write-Step "Signing with a new single-use certificate $Publisher"
+    $new = New-SelfSignedCertificate -Type Custom -Subject $Publisher -KeyUsage DigitalSignature `
+        -TextExtension @("2.5.29.37={text}$CodeSigningOid", '2.5.29.19={text}') `
+        -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy NonExportable `
+        -Provider 'Microsoft Software Key Storage Provider' -NotAfter (Get-Date).AddDays(30) `
+        -FriendlyName 'Convert package signing (single use)' -CertStoreLocation Cert:\CurrentUser\My
+    $thumbprint = $new.Thumbprint
+    Assert-Thumbprint $thumbprint
+    $keyInfo = $null
+    try {
+        $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint"
+        $keyInfo = Get-PrivateKeyInfo $cert
+        $certBase64 = [Convert]::ToBase64String($cert.RawData)   # public part only
+        $SignArguments = @('sign', '/fd', 'SHA256', '/sha1', $thumbprint, '/s', 'My')
+        Invoke-Sign @($Msix)
+        # The setup program is made while the key still exists, so it and its uninstaller are signed too.
+        if ($Setup) { $SetupProgram = New-SetupProgram }
+    } finally {
+        # The private key exists only for as long as signing takes. New-SelfSignedCertificate also puts a
+        # copy of the certificate in CurrentUser\CA.
+        $leftovers = @(@('My', 'CA') | ForEach-Object { Remove-UserCert -StoreName $_ -Thumbprint $thumbprint } | Where-Object { $_ })
+        if ($leftovers.Count) { Write-Warning "Not everything of the signing certificate could be deleted: $($leftovers -join '; '). Run .\uninstall.ps1 to remove it." }
+    }
+    if (-not $keyInfo -or $keyInfo.Kind -eq 'unknown' -or (Test-PrivateKeyExists $keyInfo)) {
+        throw 'Stopped before trusting the certificate, because its private key may still exist. Nothing was installed. Run .\uninstall.ps1, then try again.'
+    }
+    Write-Note "Signed; the private key is deleted (certificate $thumbprint, valid until $((Get-Date).AddDays(30).ToString('yyyy-MM-dd')))"
 }
-if (-not $keyInfo -or $keyInfo.Kind -eq 'unknown' -or (Test-PrivateKeyExists $keyInfo)) {
-    throw 'Stopped before trusting the certificate, because its private key may still exist. Nothing was installed. Run .\uninstall.ps1, then try again.'
+
+if ($SetupProgram) {
+    $size = (Get-Item -LiteralPath $SetupProgram).Length
+    Write-Host ''
+    Write-Host ("Built {0} ({1:N1} MB)" -f $SetupProgram, ($size / 1MB)) -ForegroundColor Green
+    Write-Host "SHA-256: $((Get-FileHash -LiteralPath $SetupProgram -Algorithm SHA256).Hash)"
 }
-Write-Note "Signed; the private key is deleted (certificate $thumbprint, valid until $((Get-Date).AddDays(30).ToString('yyyy-MM-dd')))"
+if (-not $singleUse) { return }
 
 # --- trust (one UAC prompt) --------------------------------------------------------------------------
 
+if ($Setup) { Write-Note 'A setup program signed with -TestSign only works on this PC, and only once the certificate is trusted here:' }
 $stale = @(Get-ConvertDevCerts 'LocalMachine' 'TrustedPeople' | Where-Object { $_.Thumbprint -ne $thumbprint } | ForEach-Object { $_.Thumbprint })
 Write-Step 'Trusting the new certificate on this PC (Windows asks for permission)'
 if ($stale.Count) { Write-Note "Also removing $($stale.Count) trust entr$(if ($stale.Count -eq 1) { 'y' } else { 'ies' }) from earlier installs: $($stale -join ', ')" }
 $result = Invoke-ElevatedPowerShell (New-TrustStoreScript -AddBase64 @($certBase64) -RemoveThumbprints $stale)
 if (-not $result.Started) {
     if ($result.Cancelled) {
-        throw "You declined the Windows permission prompt, so nothing was installed or changed (an installed Convert, if any, is untouched; the new signing key is already deleted). Run .\build.ps1 -Install again and choose Yes to install."
+        throw "You declined the Windows permission prompt, so nothing was installed or changed (an installed Convert, if any, is untouched; the new signing key is already deleted). Run the same command again and choose Yes."
     }
     throw "Couldn't start the elevated step: $($result.Message)"
 }
@@ -342,6 +484,13 @@ $trusted = @(Get-ConvertDevCerts 'LocalMachine' 'TrustedPeople' | ForEach-Object
 if ($trusted -notcontains $thumbprint) { throw "The certificate isn't in LocalMachine\TrustedPeople after the elevated step. Nothing was installed." }
 $stillStale = @($stale | Where-Object { $trusted -contains $_ })
 if ($stillStale.Count) { Write-Warning "Old trust entries still present: $($stillStale -join ', '). .\uninstall.ps1 removes them." }
+
+if (-not $Install) {
+    Write-Host ''
+    Write-Host "The test certificate is trusted on this PC. Try the setup program: $SetupProgram" -ForegroundColor Green
+    Write-Host 'Uninstall from Settings > Apps afterwards; .\uninstall.ps1 removes the trust entry.'
+    return
+}
 
 # --- install -----------------------------------------------------------------------------------------
 
