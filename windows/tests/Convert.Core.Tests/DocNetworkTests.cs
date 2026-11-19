@@ -342,6 +342,21 @@ public sealed class DocNetworkTests(ITestOutputHelper log) : IDisposable
         await AssertNoNetwork(sink, Html(sink, unc: false), "docx", DocGuards.Browser | DocGuards.OfficeProxy);
     }
 
+    /// <summary>
+    /// With all web traffic sent to the sink as a proxy, a plain document shows what WebView2 asks for
+    /// by itself: its experiment configuration and SmartScreen, without the switches that turn them off.
+    /// </summary>
+    [Fact]
+    public async Task TheRuntimeItselfAsksNobodyAnything()
+    {
+        using var sink = new Sink();
+        var page = Write("plain.html", "<!doctype html><title>Plain</title><p>Nothing to fetch.");
+        var options = new DocOptions { Guards = DocGuards.RequestFilter, BrowserArguments = $"--proxy-server={sink.Url} --proxy-bypass-list=<-loopback>" };
+        Assert.True(File.Exists(await DocConv.ConvertAsync(page, Targets.ById("pdf-doc")!, new ConvSettings(), new Runner(), options)));
+        await Task.Delay(2000);
+        log.WriteLine(sink.Report());
+        Assert.True(sink.Connections == 0, sink.Report());
+    }
     // What else a page could do
 
     /// <summary>A frame pointing at a file WebView2 can't show would save it to Downloads.</summary>
