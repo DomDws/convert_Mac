@@ -15,10 +15,15 @@ public static class PdfConv
         if (t.IsPdfText) return [await Task.Run(() => PdfDocConv.Convert(input, t, runner, progress))];
 
         WinPdf.PdfDocument doc;
+        FileStream source;
+        try { source = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new ConvertException("Couldn't open this PDF"); }
+        await using var opened = source;
         try
         {
-            var file = await StorageFile.GetFileFromPathAsync(Path.GetFullPath(input));
-            doc = await WinPdf.PdfDocument.LoadFromFileAsync(file);
+            // From a stream we open ourselves: Windows' own way of opening a file by path (StorageFile)
+            // gives up on paths longer than 260 characters.
+            doc = await WinPdf.PdfDocument.LoadFromStreamAsync(source.AsRandomAccessStream());
         }
         catch (Exception e) when (e.HResult == unchecked((int)0x8007052B))   // ERROR_WRONG_PASSWORD
         {

@@ -170,7 +170,11 @@ public static class ImageConv
             img = new MagickImage(file, new MagickReadSettings { Format = decoder, FrameIndex = 0, FrameCount = 1 });
         }
         catch (MagickException e) { throw new ConvertException($"Couldn't read this image ({FirstLine(e.Message)})"); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { throw new ConvertException("Couldn't read this image"); }
+        // An empty file, one that can't be opened, a number in it that doesn't fit: not a picture, at any rate.
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or OverflowException)
+        {
+            throw new ConvertException("Couldn't read this image");
+        }
 
         using (img)
         {
