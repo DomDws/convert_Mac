@@ -182,5 +182,12 @@ Windows deleted it after all. An original is only recycled when its finished out
 - A selection too long for a command line (about 32,000 characters) is written to a list file in the
   temp folder and passed as `--files <list>`. Convert deletes the list after reading it, but only a file
   with the name the menu gives it, in the temp folder.
-- The publisher in the package manifest and in `src/Convert/app.manifest` (`<msix>`) must match.
+- The publisher in the package manifest and in `src/Convert/app.manifest` (`<msix>`) must match. For a
+  release it is the subject of the signing certificate; `build.ps1 -Setup` builds the app with a copy of
+  the manifest that says so.
+- `build.ps1 -Install` registers the package with PowerShell. The setup program
+  (`installer/Convert.iss`) has no PowerShell to lean on, so the app does it itself:
+  `Convert.exe --register-menu` registers the `Convert.msix` next to it with its own folder as the
+  external location, and `--unregister-menu` removes it and ends the `dllhost.exe` that holds the files
+  (`ShellMenu.cs`).
 - `Convert.Shell` is a .NET comhost, so the .NET 10 runtime must be installed.
