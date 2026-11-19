@@ -1,0 +1,8 @@
+# Read by dotnet format (.\check.ps1 format). root stops the search here, so an .editorconfig in a
+# folder above the checkout (a personal one, or one added for the Mac code) can't change the result.
+root = true
+
+# What dotnet format assumes on Windows anyway, written down: Git for Windows checks files out with
+# CRLF (core.autocrlf=true), and so do GitHub's Windows runners.
+[*.{cs,xaml,csproj,props,slnx}]
+end_of_line = crlf
