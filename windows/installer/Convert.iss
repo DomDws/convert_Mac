@@ -146,14 +146,16 @@ end;
 function RegisterMenu: Integer;
 var
   Attempt, Answer, Status: Integer;
+  Started: Boolean;
   Convert: String;
 begin
   Convert := ExpandConstant('{app}\Convert.exe');
-  Answer := -1;
-  for Attempt := 1 to 3 do
+  Result := 1;
+  for Attempt := 1 to 10 do
   begin
-    if not Exec(Convert, '--register-menu', '', SW_HIDE, ewWaitUntilTerminated, Answer) then
-      Answer := -1;
+    Started := Exec(Convert, '--register-menu', '', SW_HIDE, ewWaitUntilTerminated, Answer);
+    if not Started then
+      Log('Convert.exe couldn''t be started: ' + SysErrorMessage(Answer));
     if Exec(Convert, '--menu-status', '', SW_HIDE, ewWaitUntilTerminated, Status) and (Status = 0) then
     begin
       Log('Menu entry registered at attempt ' + IntToStr(Attempt));
@@ -163,9 +165,15 @@ begin
     Log('Menu entry not registered after attempt ' + IntToStr(Attempt) + ' (answer ' + IntToStr(Answer) + ')');
     { The first attempt may have been cut short (see above). After that, 1 and 3 are Convert's own
       answers, and a refusal is a refusal. }
-    if (Attempt > 1) and ((Answer = 1) or (Answer = 3)) then Break;
+    if Started and (Attempt > 1) and ((Answer = 1) or (Answer = 3)) then
+    begin
+      Result := Answer;
+      Exit;
+    end;
+    { While Windows is still taking the old registration apart, Convert.exe can't be started at all.
+      That takes a second or two. }
+    Sleep(1000);
   end;
-  if (Answer = 1) or (Answer = 3) then Result := Answer else Result := 1;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -195,9 +203,20 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Settings: String;
+  Settings, Folder: String;
+  Attempt: Integer;
 begin
   if CurUninstallStep <> usPostUninstall then Exit;
+  { Windows holds on to a few of Convert's files (its logos, for one) for a moment after the menu
+    entry is gone, so their folders are still there when the uninstaller gets to them. The program
+    folder is Convert's alone: what is left of it goes, a little later. }
+  Folder := ExpandConstant('{app}');
+  for Attempt := 1 to 10 do
+  begin
+    if not DirExists(Folder) then Break;
+    if DelTree(Folder, True, True, True) then Break;
+    Sleep(500);
+  end;
   Settings := ExpandConstant('{localappdata}\Convert\settings.json');
   if FileExists(Settings) and not UninstallSilent then
     if MsgBox('Also remove your Convert settings (the formats and options you last used)?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
