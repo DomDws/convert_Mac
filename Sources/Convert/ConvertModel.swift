@@ -20,6 +20,7 @@ final class ConvertModel: ObservableObject {
     @Published private(set) var trashed = 0
     /// Set when outputs couldn't go next to their originals (read-only folder) and were saved here instead.
     @Published private(set) var savedElsewhere: URL?
+    @Published private(set) var doneMessage: String?
     /// Move each original to the Trash once its conversion succeeded (remembered).
     @Published var trashOriginals = UserDefaults.standard.bool(forKey: "trashOriginals") {
         didSet { UserDefaults.standard.set(trashOriginals, forKey: "trashOriginals") }
@@ -71,6 +72,7 @@ final class ConvertModel: ObservableObject {
         stopped = false
         trashed = 0
         savedElsewhere = nil
+        doneMessage = nil
     }
 
     private func chooseTarget() {
@@ -153,6 +155,11 @@ final class ConvertModel: ObservableObject {
             }
             progress = 1
             indeterminate = false
+            if !outputs.isEmpty, errors.isEmpty, !stopped {
+                doneMessage = EasterEggs.doneMessage(count: outputs.count)
+            } else if !outputs.isEmpty {
+                doneMessage = EasterEggs.standardDoneMessage(count: outputs.count)
+            }
             phase = .done
         }
     }

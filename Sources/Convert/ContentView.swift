@@ -19,9 +19,14 @@ struct ContentView: View {
     @State private var quickActionInstalled = QuickAction.isInstalled
     @AppStorage("showAdvanced") private var showAdvanced = false
 
+    private var birthdayMessage: String? { EasterEggs.birthdayMessage() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
+            if let birthdayMessage {
+                birthdayBanner(birthdayMessage)
+            }
 
             if model.files.isEmpty {
                 dropZone
@@ -74,6 +79,12 @@ struct ContentView: View {
                     .foregroundStyle(Brand.sky)
                     .frame(width: 40, height: 40)
                     .background(Brand.sky.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            } else if birthdayMessage != nil {
+                Image(systemName: "party.popper.fill")
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(.pink)
+                    .frame(width: 40, height: 40)
+                    .background(Color.pink.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             } else {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
@@ -110,6 +121,20 @@ struct ContentView: View {
         }
         if model.skipped > 0 { parts.append("\(model.skipped) unsupported skipped") }
         return parts.joined(separator: " · ")
+    }
+
+    private func birthdayBanner(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "party.popper.fill")
+                .font(.title3)
+                .foregroundStyle(.pink)
+            Text(message)
+                .font(.callout.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.pink.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var dropZone: some View {
@@ -231,7 +256,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if !model.outputs.isEmpty {
                     Label(
-                        "Converted \(model.outputs.count) \(model.outputs.count == 1 ? "file" : "files")",
+                        model.doneMessage ?? EasterEggs.standardDoneMessage(count: model.outputs.count),
                         systemImage: "checkmark.circle.fill"
                     )
                     .foregroundStyle(.green)

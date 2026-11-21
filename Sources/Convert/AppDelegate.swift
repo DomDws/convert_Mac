@@ -77,6 +77,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .font: NSFont.systemFont(ofSize: 11),
                     .link: URL(string: "https://convert.newtonbuilds.dev")!,
                 ]))
+        credits.append(
+            NSAttributedString(
+                string: "\n\(EasterEggs.aboutCreditLine)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]))
         let centered = NSMutableParagraphStyle()
         centered.alignment = .center
         credits.addAttribute(.paragraphStyle, value: centered, range: NSRange(location: 0, length: credits.length))
