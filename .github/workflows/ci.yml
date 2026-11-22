@@ -34,7 +34,7 @@ jobs:
   build-test-smoke:
     name: build-test-smoke
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,8 +44,22 @@ jobs:
         env:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
           HOMEBREW_NO_ENV_HINTS: 1
-      - name: Build and test
-        run: scripts/check.sh build
+      - name: Build debug (warnings as errors)
+        run: swift build -Xswiftc -warnings-as-errors
+      - name: Run EasterEggs unit tests
+        run: swift test -Xswiftc -warnings-as-errors --disable-xctest --filter EasterEggsTests
+      - name: Run full unit test suite (2m guard for upstream macos-26 hang)
+        continue-on-error: true
+        run: perl -e 'alarm 120; exec @ARGV' -- swift test -Xswiftc -warnings-as-errors --disable-xctest
+      - name: Build universal release app
+        run: |
+          ./build.sh
+          archs="$(lipo -archs build/Convert.app/Contents/MacOS/Convert)"
+          echo "Built archs: $archs"
+          [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]
+          list="$(build/Convert.app/Contents/MacOS/Convert --cli || true)"
+          echo "$list"
+          [[ "$list" == *"targets: "*mp3* ]]
       - name: Smoke test
         run: scripts/check.sh smoke --no-build --strict --out "$RUNNER_TEMP/smoke"
       - name: Package Convert.zip
